@@ -1,0 +1,94 @@
+app:
+  name: "Bright-Chat API"
+  version: "1.0.0"
+  debug: false
+  api_prefix: "/api/v1"
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "http://127.0.0.1:3000"
+    - "http://127.0.0.1:8080"
+  cors_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  cors_headers:
+    - "*"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  workers: 1
+  keepalive: 30
+  timeout: 30
+
+database:
+  default:
+    driver: "mysql"
+    host: "47.116.218.206"
+    port: 13306
+    username: "root"
+    password: "123456"
+    database: "bright_chat"
+    charset: "utf8mb4"
+    pool_size: 10
+    max_overflow: 20
+    pool_timeout: 30
+    pool_recycle: 3600
+  # 可以配置多个数据库连接
+  # alternative:
+  #   driver: "postgresql"
+  #   host: "localhost"
+  #   port: 5432
+  #   username: "user"
+  #   password: "password"
+  #   database: "bright_chat_alt"
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+  decode_responses: true
+
+auth:
+  jwt_secret_key: "your-super-secret-jwt-key-change-this-in-production"
+  jwt_algorithm: "HS256"
+  jwt_access_token_expire_minutes: 1440  # 24 hours
+  jwt_refresh_token_expire_days: 7
+
+ias:
+  base_url: "http://localhost:8080/api/v1"
+  timeout: 30
+  max_retries: 3
+  stream_chunk_size: 1024
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/app.log"
+  max_file_size: "10MB"
+  backup_count: 5
+
+monitoring:
+  prometheus_enabled: true
+  prometheus_path: "/metrics"
+
+openapi:
+  title: "Bright-Chat API"
+  description: "Bright-Chat Backend API Documentation"
+  version: "1.0.0"
+  contact:
+    name: "Bright-Chat Team"
+    email: "api@bright-chat.com"
+  license:
+    name: "MIT"
+    url: "https://opensource.org/licenses/MIT"
+
+features:
+  enable_mock_data: false
+  enable_rate_limit: true
+  rate_limit_requests: 100
+  rate_limit_window: 60  # seconds
