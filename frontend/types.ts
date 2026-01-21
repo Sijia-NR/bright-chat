@@ -87,3 +87,55 @@ export interface FavoriteResponse {
   messageId: string;
   createdAt: string;
 }
+
+// LLM 模型相关类型定义
+export type LLMModelType = 'openai' | 'anthropic' | 'custom' | 'ias';
+
+export interface LLMModel {
+  id: string;
+  name: string;
+  display_name: string;
+  model_type: LLMModelType;
+  api_url: string;
+  api_key: string;  // admin 用户可见
+  api_version?: string;
+  description?: string;
+  is_active: boolean;
+  max_tokens: number;
+  temperature: number;
+  stream_supported: boolean;
+  created_at: string;
+}
+
+export interface LLMModelCreate {
+  name: string;
+  display_name: string;
+  model_type: LLMModelType;
+  api_url: string;
+  api_key: string;
+  api_version?: string;
+  description?: string;
+  is_active?: boolean;
+  max_tokens?: number;
+  temperature?: number;
+  stream_supported?: boolean;
+  custom_headers?: Record<string, string>;
+}
+
+export interface LLMModelUpdate {
+  display_name?: string;
+  api_url?: string;
+  api_key?: string;
+  api_version?: string;
+  description?: string;
+  is_active?: boolean;
+  max_tokens?: number;
+  temperature?: number;
+  stream_supported?: boolean;
+  custom_headers?: Record<string, string>;
+}
+
+export interface LLMModelListResponse {
+  models: LLMModel[];
+  total: number;
+}

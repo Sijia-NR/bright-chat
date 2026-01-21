@@ -4,6 +4,7 @@ Minimal API for Bright-Chat - Single file implementation
 """
 import os
 import sys
+import base64
 from datetime import datetime, timedelta
 from typing import Optional, List
 from enum import Enum
@@ -13,7 +14,7 @@ from fastapi.responses import StreamingResponse
 import asyncio
 import json
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Enum as SQLEnum, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Enum as SQLEnum, Text, ForeignKey, UniqueConstraint, Integer, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -115,6 +116,36 @@ class MessageFavorite(Base):
     message = relationship("Message")
     session = relationship("Session")
 
+class LLMModelType(str, Enum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    CUSTOM = "custom"
+    IAS = "ias"
+
+class LLMModel(Base):
+    """LLM 模型配置表"""
+    __tablename__ = "llm_models"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    display_name = Column(String(100), nullable=False)
+    model_type = Column(SQLEnum(LLMModelType), nullable=False, default=LLMModelType.CUSTOM)
+    api_url = Column(String(500), nullable=False)
+    api_key = Column(Text, nullable=False)  # 明文存储 API Key，admin 用户可见
+    api_version = Column(String(50), nullable=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+    max_tokens = Column(Integer, default=4096)
+    temperature = Column(Integer, default=70)  # 存储为 70 表示 0.70
+    stream_supported = Column(Boolean, default=True)
+    custom_headers = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+
+    # Relationships
+    creator = relationship("User")
+
 # Pydantic models
 class UserCreate(BaseModel):
     username: str
@@ -192,6 +223,58 @@ class FavoriteStatusResponse(BaseModel):
     is_favorited: bool
     favorite_id: Optional[str] = None
 
+# LLM Model Pydantic models
+class LLMModelCreate(BaseModel):
+    """创建 LLM 模型请求"""
+    name: str
+    display_name: str
+    model_type: LLMModelType = LLMModelType.CUSTOM
+    api_url: str
+    api_key: str  # Will be encrypted before storage
+    api_version: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+    max_tokens: int = 4096
+    temperature: float = 0.70
+    stream_supported: bool = True
+    custom_headers: Optional[dict] = None
+
+class LLMModelUpdate(BaseModel):
+    """更新 LLM 模型请求"""
+    display_name: Optional[str] = None
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_version: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    stream_supported: Optional[bool] = None
+    custom_headers: Optional[dict] = None
+
+class LLMModelResponse(BaseModel):
+    """LLM 模型响应"""
+    id: str
+    name: str
+    display_name: str
+    model_type: str
+    api_url: str
+    api_version: Optional[str]
+    description: Optional[str]
+    is_active: bool
+    max_tokens: int
+    temperature: float
+    stream_supported: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class LLMModelListResponse(BaseModel):
+    """LLM 模型列表响应"""
+    models: List[LLMModelResponse]
+    total: int
+
 # Utilities
 # This function is now defined above
 
@@ -251,6 +334,95 @@ async def get_current_user(authorization: Optional[str] = Header(None), db: Sess
     if user is None:
         raise credentials_exception
     return user
+
+# Model configuration service functions
+def create_llm_model(db: Session, model_data: LLMModelCreate, creator_id: str) -> LLMModel:
+    """创建新的 LLM 模型配置"""
+    # 检查名称是否已存在
+    existing = db.query(LLMModel).filter(LLMModel.name == model_data.name).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Model with name '{model_data.name}' already exists"
+        )
+
+    # 创建模型
+    db_model = LLMModel(
+        name=model_data.name,
+        display_name=model_data.display_name,
+        model_type=model_data.model_type,
+        api_url=model_data.api_url,
+        api_key=model_data.api_key,  # 明文存储
+        api_version=model_data.api_version,
+        description=model_data.description,
+        is_active=model_data.is_active,
+        max_tokens=model_data.max_tokens,
+        temperature=int(model_data.temperature * 100),  # 转换为整数
+        stream_supported=model_data.stream_supported,
+        custom_headers=model_data.custom_headers,
+        created_by=creator_id
+    )
+
+    db.add(db_model)
+    db.commit()
+    db.refresh(db_model)
+    return db_model
+
+def get_llm_model(db: Session, model_id: str) -> Optional[LLMModel]:
+    """获取模型"""
+    return db.query(LLMModel).filter(LLMModel.id == model_id).first()
+
+def get_llm_model_by_name(db: Session, name: str) -> Optional[LLMModel]:
+    """根据名称获取模型"""
+    return db.query(LLMModel).filter(LLMModel.name == name).first()
+
+def get_active_llm_models(db: Session) -> List[LLMModel]:
+    """获取所有启用的模型"""
+    return db.query(LLMModel).filter(LLMModel.is_active == True).order_by(LLMModel.created_at.desc()).all()
+
+def list_llm_models(db: Session, skip: int = 0, limit: int = 100) -> List[LLMModel]:
+    """列出所有模型（管理员）"""
+    return db.query(LLMModel).offset(skip).limit(limit).all()
+
+def update_llm_model(db: Session, model_id: str, model_data: LLMModelUpdate) -> Optional[LLMModel]:
+    """更新模型配置"""
+    db_model = get_llm_model(db, model_id)
+    if not db_model:
+        return None
+
+    # 更新字段
+    for field, value in model_data.model_dump(exclude_unset=True).items():
+        if field == 'api_key' and value:
+            # 明文存储 API Key
+            setattr(db_model, 'api_key', value)
+        elif field == 'temperature' and value is not None:
+            # 转换为整数
+            setattr(db_model, field, int(value * 100))
+        else:
+            setattr(db_model, field, value)
+
+    db.commit()
+    db.refresh(db_model)
+    return db_model
+
+def delete_llm_model(db: Session, model_id: str) -> bool:
+    """删除模型配置"""
+    db_model = get_llm_model(db, model_id)
+    if not db_model:
+        return False
+
+    db.delete(db_model)
+    db.commit()
+    return True
+
+def require_admin(current_user: User = Depends(get_current_user)):
+    """要求管理员权限的依赖"""
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user
 
 # Initialize database
 Base.metadata.create_all(bind=engine)
@@ -443,10 +615,18 @@ async def save_messages(session_id: str, message_data: MessageCreate, db: Sessio
 
 @app.delete(f"{API_PREFIX}/sessions/{{session_id}}")
 async def delete_session(session_id: str, db: Session = Depends(get_db)):
-    # Delete all messages first
+    # 获取会话的所有消息 ID
+    messages = db.query(Message).filter(Message.session_id == session_id).all()
+    message_ids = [msg.id for msg in messages]
+
+    # 先删除这些消息的收藏记录（由于外键约束）
+    if message_ids:
+        db.query(MessageFavorite).filter(MessageFavorite.message_id.in_(message_ids)).delete(synchronize_session=False)
+
+    # 删除所有消息
     db.query(Message).filter(Message.session_id == session_id).delete()
 
-    # Delete session
+    # 删除会话
     session = db.query(Session).filter(Session.id == session_id).first()
     if not session:
         raise HTTPException(
@@ -460,52 +640,72 @@ async def delete_session(session_id: str, db: Session = Depends(get_db)):
 
 # IAS API proxy - forwards requests to MockServer
 @app.post(f"{API_PREFIX}/lmp-cloud-ias-server/api/llm/chat/completions/V2")
-async def ias_proxy(request: dict):
+async def ias_proxy(request: dict, db: Session = Depends(get_db)):
     """
-    Proxy request to MockServer (IAS simulator)
-    MockServer implements the LLM service API specification
+    Proxy request to configured LLM model API
+    Supports dynamic routing based on model selection
     """
-    ias_url = f"{IAS_BASE_URL}/lmp-cloud-ias-server/api/llm/chat/completions/V2"
+    # Get model name from request
+    model_name = request.get("model", "")
+    if not model_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Model name is required"
+        )
 
-    # Get the streaming flag from request
+    # Get model configuration from database
+    model = get_llm_model_by_name(db, model_name)
+
+    if not model or not model.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model '{model_name}' not found or not active"
+        )
+
+    # Get API key (明文存储)
+    api_key = model.api_key
+
+    # Prepare headers based on model type
+    headers = _prepare_model_headers(model, api_key, request)
+
+    # Use model's API URL
+    api_url = model.api_url
+
+    # Get streaming flag
     is_stream = request.get("stream", True)
 
-    # Forward request to MockServer with Authorization header
+    # Forward request to configured model API
     client = httpx.AsyncClient(timeout=120.0)
 
-    # Forward the SSE stream from MockServer to Frontend
     async def forward_stream():
-        """Forward SSE stream from MockServer to Frontend"""
+        """Forward SSE stream from model API to Frontend"""
         try:
             async with client.stream('POST',
-                ias_url,
+                api_url,
                 json=request,
-                headers={
-                    "Authorization": IAS_APP_KEY,
-                    "Content-Type": "application/json"
-                },
+                headers=headers,
                 follow_redirects=True
-            ) as mock_response:
-                if mock_response.status_code != 200:
-                    logger.error(f"[IAS Proxy] MockServer returned {mock_response.status_code}")
-                    error_detail = await mock_response.aread()
+            ) as model_response:
+                if model_response.status_code != 200:
+                    logger.error(f"[Model Proxy] {model.display_name} returned {model_response.status_code}")
+                    error_detail = await model_response.aread()
                     raise HTTPException(
-                        status_code=mock_response.status_code,
-                        detail=f"MockServer error: {error_detail.decode()}"
+                        status_code=model_response.status_code,
+                        detail=f"Model API error: {error_detail.decode()}"
                     )
 
-                async for chunk in mock_response.aiter_bytes():
+                async for chunk in model_response.aiter_bytes():
                     yield chunk
         except HTTPException:
             raise
         except httpx.RequestError as e:
-            logger.error(f"[IAS Proxy] Connection error: {e}")
+            logger.error(f"[Model Proxy] Connection error to {model.display_name}: {e}")
             raise HTTPException(
                 status_code=503,
-                detail=f"Failed to connect to MockServer: {str(e)}"
+                detail=f"Failed to connect to model API: {str(e)}"
             )
         except Exception as e:
-            logger.error(f"[IAS Proxy] Stream error: {e}")
+            logger.error(f"[Model Proxy] Stream error: {e}")
             raise
         finally:
             await client.aclose()
@@ -520,6 +720,35 @@ async def ias_proxy(request: dict):
             "Access-Control-Allow-Origin": "*"
         }
     )
+
+def _prepare_model_headers(model: LLMModel, api_key: str, request: dict) -> dict:
+    """Prepare headers based on model type"""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream"
+    }
+
+    if model.model_type == LLMModelType.OPENAI:
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif model.model_type == LLMModelType.ANTHROPIC:
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = model.api_version or "2023-06-01"
+    elif model.model_type == LLMModelType.IAS:
+        # For IAS type, use the original authorization from request if available
+        auth_header = request.get("authorization", "")
+        if auth_header and auth_header.startswith("Bearer "):
+            headers["Authorization"] = auth_header
+        else:
+            # Fallback to using API key as app key
+            headers["Authorization"] = f"Bearer {api_key}"
+        headers["X-APP-KEY"] = api_key
+    else:  # CUSTOM
+        # Use custom headers if configured
+        headers["Authorization"] = f"Bearer {api_key}"
+        if model.custom_headers:
+            headers.update(model.custom_headers)
+
+    return headers
 
 # Favorite endpoints
 @app.post(f"{API_PREFIX}/messages/{{message_id}}/favorite", response_model=dict)
@@ -654,6 +883,183 @@ async def get_favorite_status(
         "is_favorited": favorite is not None,
         "favorite_id": favorite.id if favorite else None
     }
+
+# Model management endpoints
+@app.get(f"{API_PREFIX}/models/active", response_model=dict)
+async def get_active_models(
+    db: Session = Depends(get_db)
+):
+    """获取所有启用的模型（公开）"""
+    models = get_active_llm_models(db)
+
+    # 构建响应，不返回 API Key
+    model_responses = []
+    for m in models:
+        model_responses.append({
+            "id": m.id,
+            "name": m.name,
+            "display_name": m.display_name,
+            "model_type": m.model_type.value,
+            "api_url": m.api_url,
+            "api_version": m.api_version,
+            "description": m.description,
+            "is_active": m.is_active,
+            "max_tokens": m.max_tokens,
+            "temperature": m.temperature / 100.0,  # 转换回浮点数
+            "stream_supported": m.stream_supported,
+            "created_at": m.created_at.isoformat()
+        })
+
+    return {
+        "models": model_responses,
+        "total": len(model_responses)
+    }
+
+@app.get(f"{API_PREFIX}/admin/models", response_model=dict)
+async def list_models(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """列出所有模型（管理员）- 包含 API Key"""
+    models = list_llm_models(db, skip, limit)
+
+    model_responses = []
+    for m in models:
+        model_responses.append({
+            "id": m.id,
+            "name": m.name,
+            "display_name": m.display_name,
+            "model_type": m.model_type.value,
+            "api_url": m.api_url,
+            "api_key": m.api_key,  # 返回 API Key 给管理员
+            "api_version": m.api_version,
+            "description": m.description,
+            "is_active": m.is_active,
+            "max_tokens": m.max_tokens,
+            "temperature": m.temperature / 100.0,
+            "stream_supported": m.stream_supported,
+            "created_at": m.created_at.isoformat()
+        })
+
+    return {
+        "models": model_responses,
+        "total": len(model_responses)
+    }
+
+@app.get(f"{API_PREFIX}/admin/models/{{model_id}}", response_model=dict)
+async def get_model_detail(
+    model_id: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """获取特定模型详情（管理员）- 包含 API Key"""
+    model = get_llm_model(db, model_id)
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Model not found"
+        )
+
+    return {
+        "id": model.id,
+        "name": model.name,
+        "display_name": model.display_name,
+        "model_type": model.model_type.value,
+        "api_url": model.api_url,
+        "api_key": model.api_key,  # 返回 API Key 给管理员
+        "api_version": model.api_version,
+        "description": model.description,
+        "is_active": model.is_active,
+        "max_tokens": model.max_tokens,
+        "temperature": model.temperature / 100.0,
+        "stream_supported": model.stream_supported,
+        "created_at": model.created_at.isoformat()
+    }
+
+@app.post(f"{API_PREFIX}/admin/models", response_model=dict)
+async def create_model(
+    model_data: LLMModelCreate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """创建新模型（管理员）"""
+    try:
+        model = create_llm_model(db, model_data, current_user.id)
+        return {
+            "id": model.id,
+            "name": model.name,
+            "display_name": model.display_name,
+            "model_type": model.model_type.value,
+            "api_url": model.api_url,
+            "api_key": model.api_key,
+            "is_active": model.is_active,
+            "created_at": model.created_at.isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create model: {str(e)}"
+        )
+
+@app.put(f"{API_PREFIX}/admin/models/{{model_id}}", response_model=dict)
+async def update_model(
+    model_id: str,
+    model_data: LLMModelUpdate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """更新模型（管理员）"""
+    try:
+        model = update_llm_model(db, model_id, model_data)
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Model not found"
+            )
+        return {
+            "id": model.id,
+            "name": model.name,
+            "display_name": model.display_name,
+            "model_type": model.model_type.value,
+            "api_url": model.api_url,
+            "api_key": model.api_key,
+            "is_active": model.is_active,
+            "updated_at": model.updated_at.isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update model: {str(e)}"
+        )
+
+@app.delete(f"{API_PREFIX}/admin/models/{{model_id}}")
+async def delete_model(
+    model_id: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """删除模型（管理员）"""
+    try:
+        success = delete_llm_model(db, model_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Model not found"
+            )
+        return {"message": "Model deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete model: {str(e)}"
+        )
 
 # Health check
 @app.get("/health")
