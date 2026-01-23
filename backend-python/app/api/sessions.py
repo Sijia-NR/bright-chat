@@ -11,6 +11,7 @@ from ...models.session import (
     MessagesResponse,
     Message
 )
+from ...models.favorite import MessageFavorite
 from ...core.database import get_db
 from ...services.auth import auth_service
 from ..middleware import setup_middleware
@@ -119,10 +120,18 @@ async def delete_session(
     try:
         from ...models.session import Session, Message
 
-        # Delete all messages first (due to foreign key constraint)
+        # 获取会话的所有消息 ID
+        messages = db.query(Message).filter(Message.session_id == session_id).all()
+        message_ids = [msg.id for msg in messages]
+
+        # 先删除这些消息的收藏记录（由于外键约束）
+        if message_ids:
+            db.query(MessageFavorite).filter(MessageFavorite.message_id.in_(message_ids)).delete(synchronize_session=False)
+
+        # 删除所有消息
         db.query(Message).filter(Message.session_id == session_id).delete()
 
-        # Delete session
+        # 删除会话
         session = db.query(Session).filter(Session.id == session_id).first()
         if not session:
             raise HTTPException(

@@ -9,11 +9,13 @@ import ConfirmDialog from './components/ConfirmDialog';
 import { FavoriteModal } from './components/FavoriteModal';
 import { FavoriteButton } from './components/FavoriteButton';
 import MessageContent from './MessageContent';
-import { Message, ChatSession, User, LLMModel } from './types';
+import { Message, ChatSession, User, LLMModel, Agent, AgentType, KnowledgeGroup, KnowledgeBase } from './types';
 import { chatService } from './services/chatService';
 import { authService } from './services/authService';
 import { sessionService } from './services/sessionService';
 import { modelService } from './services/modelService';
+import { agentService } from './services/agentService';
+import { knowledgeService } from './services/knowledgeService';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -32,6 +34,12 @@ const App: React.FC = () => {
   const [savedMessageCount, setSavedMessageCount] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const modelsLoadedRef = useRef(false);
+
+  // 新增状态：Agent 和知识库
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [knowledgeGroups, setKnowledgeGroups] = useState<KnowledgeGroup[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 
   // 刷新模型列表的方法
   const refreshModels = useCallback(async () => {
@@ -102,6 +110,40 @@ const App: React.FC = () => {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'auto' });
     }
   }, [messages, isTyping]);
+
+  // 加载 Agents
+  useEffect(() => {
+    const loadAgents = async () => {
+      try {
+        const agentList = await agentService.getAgents();
+        setAgents(agentList);
+      } catch (e) {
+        console.error('Failed to load agents', e);
+      }
+    };
+    loadAgents();
+  }, []);
+
+  // 加载知识库
+  useEffect(() => {
+    const loadKnowledge = async () => {
+      if (!currentUser) return;
+      try {
+        const groups = await knowledgeService.getGroups(currentUser.id);
+        setKnowledgeGroups(groups);
+
+        const allBases: KnowledgeBase[] = [];
+        for (const group of groups) {
+          const bases = await knowledgeService.getKnowledgeBases(group.id);
+          allBases.push(...bases);
+        }
+        setKnowledgeBases(allBases);
+      } catch (e) {
+        console.error('Failed to load knowledge bases', e);
+      }
+    };
+    loadKnowledge();
+  }, [currentUser]);
 
   const handleSendMessage = useCallback(async (text: string) => {
     let currentSessionId = activeSessionId;
@@ -238,6 +280,61 @@ const App: React.FC = () => {
     setView('chat');
   };
 
+  // 处理 Agent 点击
+  const handleAgentClick = async (agent: Agent) => {
+    setSelectedAgent(agent);
+    setView('chat');
+    setActiveSessionId(null);
+    setMessages([]);
+    setSavedMessageCount(0);
+
+    if (currentUser) {
+      const newSession = await sessionService.createSession(
+        `${agent.displayName} 对话`,
+        currentUser.id,
+        agent.id
+      );
+      setActiveSessionId(newSession.id);
+      const updatedList = await sessionService.getSessions(currentUser.id);
+      setSessions(updatedList);
+    }
+  };
+
+  // 处理知识库刷新
+  const refreshKnowledge = async () => {
+    if (!currentUser) return;
+    try {
+      const groups = await knowledgeService.getGroups(currentUser.id);
+      setKnowledgeGroups(groups);
+
+      const allBases: KnowledgeBase[] = [];
+      for (const group of groups) {
+        const bases = await knowledgeService.getKnowledgeBases(group.id);
+        allBases.push(...bases);
+      }
+      setKnowledgeBases(allBases);
+    } catch (e) {
+      console.error('Failed to refresh knowledge', e);
+    }
+  };
+
+  // 处理知识库分组操作
+  const handleCreateKnowledgeGroup = async (name: string, description?: string) => {
+    if (!currentUser) return;
+    await knowledgeService.createGroup(currentUser.id, name, description);
+    await refreshKnowledge();
+  };
+
+  const handleUpdateKnowledgeGroup = async (id: string, name: string, description?: string) => {
+    await knowledgeService.updateGroup(id, name, description);
+    await refreshKnowledge();
+  };
+
+  const handleDeleteKnowledgeGroup = async (id: string) => {
+    await knowledgeService.deleteGroup(id);
+    await refreshKnowledge();
+  };
+
   if (!currentUser) return <Login onLoginSuccess={onLogin} />;
 
   return (
@@ -252,7 +349,15 @@ const App: React.FC = () => {
         onLogout={handleLogout}
         onOpenAdmin={() => setView('admin')}
         onOpenFavorites={() => setIsFavoritesOpen(true)}
-        agents={[]}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        onAgentClick={handleAgentClick}
+        knowledgeGroups={knowledgeGroups}
+        knowledgeBases={knowledgeBases}
+        onKnowledgeRefresh={refreshKnowledge}
+        onCreateKnowledgeGroup={handleCreateKnowledgeGroup}
+        onUpdateKnowledgeGroup={handleUpdateKnowledgeGroup}
+        onDeleteKnowledgeGroup={handleDeleteKnowledgeGroup}
       />
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white md:bg-[#F7F7F8]">
         {view === 'admin' ? (

@@ -563,14 +563,30 @@ async def create_session(session_data: SessionCreate, db: Session = Depends(get_
     return SessionResponse.from_orm(db_session)
 
 @app.get(f"{API_PREFIX}/sessions/{{session_id}}/messages", response_model=List[MessageResponse])
-async def get_session_messages(session_id: str, db: Session = Depends(get_db)):
+async def get_session_messages(session_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 验证会话是否存在且属于当前用户
+    session = db.query(Session).filter(
+        Session.id == session_id,
+        Session.user_id == current_user.id  # 添加用户所有权验证
+    ).first()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
     messages = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp.asc(), Message.id.asc()).all()
     return [MessageResponse.from_orm(message) for message in messages]
 
 @app.post(f"{API_PREFIX}/sessions/{{session_id}}/messages")
-async def save_messages(session_id: str, message_data: MessageCreate, db: Session = Depends(get_db)):
-    # Validate session exists
-    session = db.query(Session).filter(Session.id == session_id).first()
+async def save_messages(session_id: str, message_data: MessageCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 验证会话是否存在且属于当前用户
+    session = db.query(Session).filter(
+        Session.id == session_id,
+        Session.user_id == current_user.id  # 添加用户所有权验证
+    ).first()
+
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -614,7 +630,19 @@ async def save_messages(session_id: str, message_data: MessageCreate, db: Sessio
     return {"message": "Messages saved successfully"}
 
 @app.delete(f"{API_PREFIX}/sessions/{{session_id}}")
-async def delete_session(session_id: str, db: Session = Depends(get_db)):
+async def delete_session(session_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 验证会话是否存在且属于当前用户
+    session = db.query(Session).filter(
+        Session.id == session_id,
+        Session.user_id == current_user.id  # 添加用户所有权验证
+    ).first()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
     # 获取会话的所有消息 ID
     messages = db.query(Message).filter(Message.session_id == session_id).all()
     message_ids = [msg.id for msg in messages]

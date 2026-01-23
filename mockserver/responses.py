@@ -263,7 +263,7 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
     def _create_stream_response(self, request_id: str, trace_id: str, timestamp: int, content: str) -> Dict[str, Any]:
         """创建流式响应生成器"""
         def generate_stream():
-            # 发送初始chunk
+            # 发送初始chunk（包含role）
             first_chunk = {
                 "id": request_id,
                 "appId": self.app_id,
@@ -283,7 +283,7 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                 ],
                 "usage": None
             }
-            yield f"data:{json.dumps(first_chunk, ensure_ascii=False)}\n\n"
+            yield f"event:data\ndata:{json.dumps(first_chunk, ensure_ascii=False)}\n\n"
 
             # 发送内容chunks
             for char in stream_text(content):
@@ -306,9 +306,9 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                     ],
                     "usage": None
                 }
-                yield f"data:{json.dumps(chunk, ensure_ascii=False)}\n\n"
+                yield f"event:data\ndata:{json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-            # 发送结束标记
+            # 发送结束标记chunk（finish_reason=stop, delta=null）
             end_chunk = {
                 "id": request_id,
                 "appId": self.app_id,
@@ -324,8 +324,26 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                 ],
                 "usage": None
             }
-            yield f"data:{json.dumps(end_chunk, ensure_ascii=False)}\n\n"
-            yield "data:[DONE]\n\n"
+            yield f"event:data\ndata:{json.dumps(end_chunk, ensure_ascii=False)}\n\n"
+
+            # 发送usage chunk（choices=null）
+            usage_chunk = {
+                "id": request_id,
+                "appId": self.app_id,
+                "globalTraceId": trace_id,
+                "object": "chat.completion.chunk",
+                "created": timestamp,
+                "choices": None,
+                "usage": {
+                    "prompt_tokens": len(content) // 2,
+                    "completion_tokens": len(content),
+                    "total_tokens": len(content) + len(content) // 2
+                }
+            }
+            yield f"event:data\ndata:{json.dumps(usage_chunk, ensure_ascii=False)}\n\n"
+
+            # 发送最终结束标记
+            yield f"event:data\ndata:[DONE]\n\n"
 
         return generate_stream()
 
@@ -358,7 +376,7 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
     def _create_multimodal_stream_response(self, request_id: str, trace_id: str, timestamp: int, content: str) -> Dict[str, Any]:
         """创建多模态流式响应生成器"""
         def generate_stream():
-            # 发送初始chunk
+            # 发送初始chunk（包含role）
             first_chunk = {
                 "id": request_id,
                 "appId": self.app_id,
@@ -378,7 +396,7 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                 ],
                 "usage": None
             }
-            yield f"data:{json.dumps(first_chunk, ensure_ascii=False)}\n\n"
+            yield f"event:data\ndata:{json.dumps(first_chunk, ensure_ascii=False)}\n\n"
 
             # 发送内容chunks
             for char in stream_text(content):
@@ -401,9 +419,9 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                     ],
                     "usage": None
                 }
-                yield f"data:{json.dumps(chunk, ensure_ascii=False)}\n\n"
+                yield f"event:data\ndata:{json.dumps(chunk, ensure_ascii=False)}\n\n"
 
-            # 发送结束标记
+            # 发送结束标记chunk（finish_reason=stop, delta=null）
             end_chunk = {
                 "id": request_id,
                 "appId": self.app_id,
@@ -414,16 +432,30 @@ SELECT id, username, email FROM users WHERE is_active = TRUE;
                     {
                         "finish_reason": "stop",
                         "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": content,
-                            "isSensitiveWord": False
-                        }
+                        "delta": None
                     }
                 ],
                 "usage": None
             }
-            yield f"data:{json.dumps(end_chunk, ensure_ascii=False)}\n\n"
-            yield "data:[DONE]\n\n"
+            yield f"event:data\ndata:{json.dumps(end_chunk, ensure_ascii=False)}\n\n"
+
+            # 发送usage chunk（choices=null）
+            usage_chunk = {
+                "id": request_id,
+                "appId": self.app_id,
+                "globalTraceId": trace_id,
+                "object": "chat.completion.chunk",
+                "created": timestamp,
+                "choices": None,
+                "usage": {
+                    "prompt_tokens": len(content) // 2,
+                    "completion_tokens": len(content),
+                    "total_tokens": len(content) + len(content) // 2
+                }
+            }
+            yield f"event:data\ndata:{json.dumps(usage_chunk, ensure_ascii=False)}\n\n"
+
+            # 发送最终结束标记
+            yield f"event:data\ndata:[DONE]\n\n"
 
         return generate_stream()

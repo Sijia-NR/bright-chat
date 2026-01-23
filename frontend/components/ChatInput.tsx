@@ -56,7 +56,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="问问 BrightChat，或者输入 / 触发指令..."
+          placeholder="向AI助手提问，开始工作..."
           className="w-full resize-none border-none focus:ring-0 p-4 pb-0 text-gray-800 placeholder-gray-400 text-[16px] leading-relaxed max-h-[200px] min-h-[56px] outline-none bg-white"
           disabled={disabled}
         />

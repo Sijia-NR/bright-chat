@@ -9,17 +9,30 @@ interface TopBarProps {
 }
 
 const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange }) => {
-  const currentModel = models.find(m => m.id === selectedModelId) || { name: '选择模型' };
+  // 当没有选中模型或模型列表为空时，显示提示
+  const currentModel = selectedModelId
+    ? models.find(m => m.id === selectedModelId)
+    : null;
+
+  const displayText = currentModel
+    ? currentModel.name
+    : (models.length === 0 ? '请先配置模型' : '选择模型');
 
   return (
     <header className="h-14 border-b border-gray-100 bg-white/80 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between px-6">
       <div className="relative group">
-        <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-sm font-semibold text-gray-800">
-          <span>{currentModel.name}</span>
-          <ChevronDown size={14} className="text-gray-400" />
+        <button
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm font-semibold ${
+            models.length === 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white hover:bg-gray-100 text-gray-800'
+          }`}
+          disabled={models.length === 0}
+        >
+          <span>{displayText}</span>
+          {models.length > 0 && <ChevronDown size={14} className="text-gray-400" />}
         </button>
 
-        <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-left scale-95 group-hover:scale-100 z-20">
+        {models.length > 0 && (
+          <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all transform origin-top-left scale-95 group-hover:scale-100 z-20">
           <div className="p-1.5 space-y-0.5">
             {models.map((model) => (
               <button
@@ -37,6 +50,7 @@ const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange 
             ))}
           </div>
         </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2">

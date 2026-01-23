@@ -1,7 +1,16 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Star, LogOut, Settings } from 'lucide-react';
+import { ChatSession, User, Agent, KnowledgeGroup, KnowledgeBase } from '../types';
+import AgentSection from './sidebar/AgentSection';
+import KnowledgeSection from './sidebar/KnowledgeSection';
+import SessionTrailSection from './sidebar/SessionTrailSection';
+import KnowledgeModal from './sidebar/KnowledgeModal';
 
-import React from 'react';
-import { Plus, MessageSquare, Settings, Clock, Trash2, ShieldCheck, LogOut, Star } from 'lucide-react';
-import { ChatSession, User, Agent } from '../types';
+interface SidebarSectionState {
+  agents: boolean;
+  knowledge: boolean;
+  sessions: boolean;
+}
 
 interface SidebarProps {
   sessions: ChatSession[];
@@ -9,12 +18,20 @@ interface SidebarProps {
   onNewChat: () => void;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
-  onOpenSettings: () => void;
   currentUser: User;
   onLogout: () => void;
   onOpenAdmin: () => void;
   onOpenFavorites: () => void;
+  // 新增 props
   agents: Agent[];
+  selectedAgent: Agent | null;
+  onAgentClick: (agent: Agent) => void;
+  knowledgeGroups: KnowledgeGroup[];
+  knowledgeBases: KnowledgeBase[];
+  onKnowledgeRefresh: () => void;
+  onCreateKnowledgeGroup: (name: string, description?: string) => Promise<void>;
+  onUpdateKnowledgeGroup: (id: string, name: string, description?: string) => Promise<void>;
+  onDeleteKnowledgeGroup: (id: string) => Promise<void>;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -23,15 +40,50 @@ const Sidebar: React.FC<SidebarProps> = ({
   onNewChat,
   onSelectSession,
   onDeleteSession,
-  onOpenSettings,
   currentUser,
   onLogout,
   onOpenAdmin,
   onOpenFavorites,
-  agents
+  agents,
+  selectedAgent,
+  onAgentClick,
+  knowledgeGroups,
+  knowledgeBases,
+  onKnowledgeRefresh,
+  onCreateKnowledgeGroup,
+  onUpdateKnowledgeGroup,
+  onDeleteKnowledgeGroup
 }) => {
+  const [sections, setSections] = useState<SidebarSectionState>({
+    agents: true,
+    knowledge: true,
+    sessions: true
+  });
+
+  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
+
+  // 从 localStorage 恢复折叠状态
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebar_sections');
+    if (saved) {
+      try {
+        setSections(JSON.parse(saved));
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+  }, []);
+
+  // 保存折叠状态
+  const toggleSection = (section: keyof SidebarSectionState) => {
+    const newSections = { ...sections, [section]: !sections[section] };
+    setSections(newSections);
+    localStorage.setItem('sidebar_sections', JSON.stringify(newSections));
+  };
+
   return (
     <aside className="w-[260px] h-screen bg-white border-r border-gray-100 flex flex-col transition-all duration-300 z-50">
+      {/* 新建对话按钮 */}
       <div className="p-4">
         <button
           onClick={onNewChat}
@@ -42,80 +94,48 @@ const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 space-y-1 py-2 custom-scrollbar">
-        <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-3 mb-4 flex items-center gap-2 opacity-60">
-          <Clock size={12} /> 最近对话
-        </div>
-        
-        {sessions.length === 0 ? (
-          <div className="px-4 py-10 text-center">
-            <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center mx-auto mb-3">
-               <MessageSquare size={16} className="text-gray-300" />
-            </div>
-            <p className="text-[11px] text-gray-400 font-medium">暂无对话记录</p>
-          </div>
-        ) : (
-          sessions.map((session) => (
-            <div
-              key={session.id}
-              className={`group relative w-full flex items-center rounded-xl transition-all mb-0.5 cursor-pointer ${
-                activeSessionId === session.id ? 'bg-blue-50/80 shadow-sm' : 'hover:bg-gray-50'
-              }`}
-              onClick={() => onSelectSession(session.id)}
-            >
-              <div className={`flex-1 px-4 py-3 flex items-center gap-3 text-sm truncate ${
-                activeSessionId === session.id ? 'text-blue-600 font-bold' : 'text-gray-600'
-              }`}>
-                <MessageSquare size={16} className={activeSessionId === session.id ? 'text-blue-500' : 'text-gray-400'} />
-                <span className="truncate pr-6">{session.title}</span>
-              </div>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation(); // 阻止冒泡到父级 div 的 onClick
-                  onDeleteSession(session.id);
-                }}
-                className="absolute right-2 p-2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-50 rounded-lg active:scale-90"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))
-        )}
+      {/* 数字员工模块 */}
+      <AgentSection
+        agents={agents}
+        isExpanded={sections.agents}
+        onToggle={() => toggleSection('agents')}
+        onAgentClick={onAgentClick}
+      />
 
-        {/* 收藏的消息入口 */}
-        <div className="pt-4 mt-4 border-t border-gray-50">
-          <button
-            onClick={onOpenFavorites}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-yellow-50 text-gray-600 hover:text-yellow-600 transition-all text-sm font-bold group"
-          >
-            <Star size={18} className="group-hover:fill-yellow-400 transition-all" />
-            <span>收藏的消息</span>
-          </button>
-        </div>
+      {/* 个人知识库模块 */}
+      <KnowledgeSection
+        groups={knowledgeGroups}
+        bases={knowledgeBases}
+        isExpanded={sections.knowledge}
+        onToggle={() => toggleSection('knowledge')}
+        onOpenManage={() => setIsKnowledgeModalOpen(true)}
+      />
 
-        {currentUser.role === 'admin' && (
-          <div className="pt-6 mt-6 border-t border-gray-50">
-            <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-3 mb-4 opacity-60">
-              管理选项
-            </div>
-            <button
-              onClick={onOpenAdmin}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-blue-50 text-gray-600 hover:text-blue-600 transition-all text-sm font-bold"
-            >
-              <ShieldCheck size={18} />
-              <span>用户注册与管理</span>
-            </button>
-          </div>
-        )}
+      {/* 会话轨迹模块 */}
+      <SessionTrailSection
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        isExpanded={sections.sessions}
+        onToggle={() => toggleSection('sessions')}
+        onSelectSession={onSelectSession}
+        onDeleteSession={onDeleteSession}
+      />
+
+      {/* 收藏的消息入口 */}
+      <div className="p-4 border-t border-gray-50">
+        <button
+          onClick={onOpenFavorites}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-yellow-50 text-gray-600 hover:text-yellow-600 transition-all text-sm font-bold group"
+        >
+          <Star size={18} className="group-hover:fill-yellow-400 transition-all" />
+          <span>收藏的消息</span>
+        </button>
       </div>
 
+      {/* 用户信息区域 */}
       <div className="p-4 border-t border-gray-50 space-y-3 bg-white">
-        <div 
-          onClick={onOpenSettings}
-          className="flex items-center gap-3 p-3 rounded-2xl hover:bg-gray-50 cursor-pointer transition-all group border border-transparent hover:border-gray-100"
-        >
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black shadow-sm ${
+        <div className="flex items-center gap-3 p-2">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-black shadow-sm text-base ${
             currentUser.role === 'admin' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-white'
           }`}>
             {currentUser.username.charAt(0).toUpperCase()}
@@ -124,10 +144,19 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="text-sm font-bold text-gray-900 truncate">{currentUser.username}</div>
             <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{currentUser.role}</div>
           </div>
-          <Settings size={18} className="text-gray-400 group-hover:rotate-90 transition-transform" />
+
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={onOpenAdmin}
+              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+              title="系统管理"
+            >
+              <Settings size={18} />
+            </button>
+          )}
         </div>
 
-        <button 
+        <button
           onClick={onLogout}
           className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold text-gray-400 hover:text-red-500 transition-all border-2 border-transparent hover:border-red-50 hover:bg-red-50/50 rounded-2xl"
         >
@@ -135,6 +164,20 @@ const Sidebar: React.FC<SidebarProps> = ({
           <span>退出登录</span>
         </button>
       </div>
+
+      {/* 知识库管理弹窗 */}
+      <KnowledgeModal
+        isOpen={isKnowledgeModalOpen}
+        onClose={() => {
+          setIsKnowledgeModalOpen(false);
+          onKnowledgeRefresh();
+        }}
+        groups={knowledgeGroups}
+        bases={knowledgeBases}
+        onCreateGroup={onCreateKnowledgeGroup}
+        onUpdateGroup={onUpdateKnowledgeGroup}
+        onDeleteGroup={onDeleteKnowledgeGroup}
+      />
     </aside>
   );
 };

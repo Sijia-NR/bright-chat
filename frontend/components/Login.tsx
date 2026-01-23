@@ -36,10 +36,10 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         <div className="bg-white rounded-[32px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.1)] border border-gray-100 overflow-hidden">
           <div className="p-8 pt-12 text-center">
             <div className="w-16 h-16 bg-gradient-to-tr from-blue-500 to-blue-700 rounded-2xl mx-auto flex items-center justify-center shadow-xl shadow-blue-100 mb-6">
-              <span className="text-2xl font-bold text-white">B</span>
+              <span className="text-2xl font-bold text-white">AI</span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">欢迎回来</h1>
-            <p className="text-gray-500 text-sm">请输入您的凭据以访问 BrightChat (Mock: admin/admin123)</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">AI工作台</h1>
+            <p className="text-gray-500 text-sm">请输入您的凭据以访问系统 (Mock: admin/admin123)</p>
           </div>
 
           <form onSubmit={handleSubmit} className="p-8 pt-0 space-y-5">

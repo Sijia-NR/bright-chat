@@ -3,13 +3,21 @@ import React, { useState, useEffect } from 'react';
 import { UserPlus, Users, ArrowLeft, Trash2, Loader2, User as UserIcon, Shield, XCircle, CheckCircle } from 'lucide-react';
 import { adminService } from '../services/adminService';
 import { User, UserRole } from '../types';
+import ModelManagementPanel from './ModelManagementPanel';
 
 interface AdminPanelProps {
   currentUser: User;
   onBack: () => void;
+  onModelsChange?: () => void;
 }
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack }) => {
+type AdminView = 'users' | 'models';
+
+const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsChange }) => {
+  const [view, setView] = useState<AdminView>('models');
+  const [modelRefreshTrigger, setModelRefreshTrigger] = useState(0);
+
+  // 用户管理状态
   const [users, setUsers] = useState<User[]>([]);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -68,10 +76,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack }) => {
         <header className="flex items-center justify-between mb-10">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">系统管理中心</h1>
-            <p className="text-sm text-gray-500 mt-1 tracking-tight">管理用户权限与模拟数据库状态</p>
+            <p className="text-sm text-gray-500 mt-1 tracking-tight">管理用户权限与 LLM 模型配置</p>
           </div>
-          <button 
-            onClick={onBack} 
+          <button
+            onClick={onBack}
             className="flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 rounded-2xl text-gray-600 hover:text-gray-900 hover:shadow-md transition-all active:scale-95"
           >
             <ArrowLeft size={18} />
@@ -79,8 +87,35 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack }) => {
           </button>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <section className="lg:col-span-5">
+        {/* 管理选项卡 */}
+        <div className="flex gap-3 mb-8">
+          <button
+            onClick={() => setView('users')}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
+              view === 'users'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-100'
+                : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+            }`}
+          >
+            <Users size={20} />
+            用户注册与管理
+          </button>
+          <button
+            onClick={() => setView('models')}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
+              view === 'models'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'
+                : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+            }`}
+          >
+            <Shield size={20} />
+            LLM 模型管理
+          </button>
+        </div>
+
+        {view === 'users' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <section className="lg:col-span-5">
             <div className="bg-white rounded-[32px] p-8 border border-gray-100 shadow-sm sticky top-8">
               <div className="flex items-center gap-3 mb-8">
                 <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
@@ -186,6 +221,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack }) => {
             </div>
           </section>
         </div>
+        ) : (
+          <ModelManagementPanel
+            key={modelRefreshTrigger}
+            onModelChange={() => {
+              setModelRefreshTrigger(prev => prev + 1);
+              onModelsChange?.();
+            }}
+          />
+        )}
       </div>
     </div>
   );

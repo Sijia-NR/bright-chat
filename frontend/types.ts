@@ -21,13 +21,28 @@ export interface ChatSession {
   title: string;
   lastUpdated: number; // 前端使用的时间戳格式
   userId: string;
+  agentId?: string;              // 关联的 Agent ID
+  agentType?: AgentType;         // Agent 类型（用于显示）
 }
 
 export interface Agent {
   id: string;
   name: string;
+  displayName: string;           // 显示名称（中文）
   description: string;
-  icon?: string;
+  type: AgentType;               // Agent 类型
+  icon?: string;                 // 图标名称（lucide-react）
+  systemPrompt?: string;         // 系统提示词
+  isActive: boolean;             // 是否激活
+  createdAt: number;
+  order: number;                 // 排序顺序
+}
+
+// Agent 类型枚举
+export enum AgentType {
+  TEAM_LEADER = 'team_leader',      // 数字组长
+  DATA_ANALYST = 'data_analyst',    // 问数员工
+  WRITING_ASSISTANT = 'writing_assistant'  // 写作助手
 }
 
 export enum ModelType {
@@ -138,4 +153,66 @@ export interface LLMModelUpdate {
 export interface LLMModelListResponse {
   models: LLMModel[];
   total: number;
+}
+
+// 知识库分组
+export interface KnowledgeGroup {
+  id: string;
+  userId: string;                // 所属用户
+  name: string;
+  description?: string;
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+  knowledgeBaseCount?: number;   // 该分组下的知识库数量
+}
+
+// 知识库项
+export interface KnowledgeBase {
+  id: string;
+  groupId: string;               // 所属分组
+  name: string;
+  description?: string;
+  type: 'file' | 'url' | 'text';
+  size?: number;                 // 文件大小（字节）
+  url?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// 后端响应类型 - Agent
+export interface AgentResponse {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  type: string;
+  icon: string | null;
+  system_prompt: string | null;
+  is_active: boolean;
+  created_at: string;
+  order: number;
+}
+
+// 后端响应类型 - 知识库分组
+export interface KnowledgeGroupResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// 后端响应类型 - 知识库项
+export interface KnowledgeBaseResponse {
+  id: string;
+  group_id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  size: number | null;
+  url: string | null;
+  created_at: string;
+  updated_at: string;
 }

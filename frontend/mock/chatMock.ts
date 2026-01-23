@@ -3,7 +3,7 @@ import { IASChatResponse } from '../types/ias';
 
 export const mockStreamingResponse = (query: string) => {
   const encoder = new TextEncoder();
-  const text = `你好！我是 **BrightChat** 智能助手。
+  const text = `你好！我是 **AI工作台** 智能助手。
 
 我已成功接收到您的消息：
 > "${query}"
@@ -13,7 +13,7 @@ export const mockStreamingResponse = (query: string) => {
 2. **交互层 (Services)**：统一抽象 API 出口。
 3. **模拟层 (Mock)**：完美复刻 IAS 规范流式输出。
 
-您可以尝试点击左侧的“用户注册与管理”进入管理后台测试 Mock 数据的 CRUD 逻辑。`;
+您可以尝试点击左侧的"用户管理"进入管理后台测试 Mock 数据的 CRUD 逻辑。`;
   
   return new ReadableStream({
     async start(controller) {

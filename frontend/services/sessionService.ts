@@ -30,12 +30,13 @@ export const sessionService = {
     return resp.json();
   },
 
-  async createSession(title: string, userId: string): Promise<ChatSession> {
+  async createSession(title: string, userId: string, agentId?: string): Promise<ChatSession> {
     const newSession: ChatSession = {
       id: `s-${Date.now()}`,
       title: title.slice(0, 20) + (title.length > 20 ? '...' : ''),
       lastUpdated: Date.now(),
-      userId
+      userId,
+      agentId  // 新增
     };
     if (CONFIG.USE_MOCK) {
       const sessions = getMockSessions();
@@ -49,7 +50,11 @@ export const sessionService = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
       },
-      body: JSON.stringify({ title, user_id: userId })
+      body: JSON.stringify({
+        title,
+        user_id: userId,
+        agent_id: agentId  // 新增
+      })
     });
     if (!resp.ok) throw new Error('创建会话失败');
     const data = await resp.json();
@@ -57,7 +62,8 @@ export const sessionService = {
       id: data.id,
       title: data.title,
       lastUpdated: new Date(data.last_updated).getTime(),
-      userId: data.user_id
+      userId: data.user_id,
+      agentId: data.agent_id  // 新增
     };
   },
 
