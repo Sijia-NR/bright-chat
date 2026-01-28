@@ -165,6 +165,41 @@ const App: React.FC = () => {
     setIsTyping(true);
 
     try {
+      // 判断使用Agent对话还是普通模型对话
+      if (selectedAgent) {
+        console.log('[Chat] 使用 Agent 对话模式:', selectedAgent.name);
+
+        // 使用Agent对话
+        assistantMsgId = `assistant-${Date.now()}`;
+        setMessages(prev => [...prev, { id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now() }]);
+
+        let fullContent = "";
+        const eventGenerator = await agentService.agentChat(selectedAgent.id, {
+          query: text,  // 关键：使用query字段
+          session_id: currentSessionId || undefined,
+          stream: true
+        });
+
+        for await (const event of eventGenerator) {
+          if (event.type === 'stream' && event.content) {
+            fullContent += event.content;
+            setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+          } else if (event.type === 'complete' && event.output) {
+            fullContent = event.output;
+            setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+          } else if (event.type === 'error') {
+            throw new Error(event.error || 'Agent 执行出错');
+          }
+        }
+
+        // 保存到后端
+        const finalAssistantMsg: Message = { id: assistantMsgId, role: 'assistant', content: fullContent, timestamp: Date.now() };
+        await sessionService.saveMessages(currentSessionId, [userMsg, finalAssistantMsg]);
+
+        return;
+      }
+
+      // 普通模型对话
       const response = await chatService.completions({
         model: selectedModelId,
         messages: [...messages, userMsg].map(m => ({ role: m.role as any, content: m.content })),

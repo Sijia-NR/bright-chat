@@ -216,3 +216,120 @@ export interface KnowledgeBaseResponse {
   created_at: string;
   updated_at: string;
 }
+
+// ==================== Agent 相关类型 ====================
+
+// Agent 完整API类型（用于Agent管理界面）
+export interface AgentAPI {
+  id: string;
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  agent_type: string;
+  system_prompt: string | null;
+  knowledge_base_ids: string[] | null;
+  tools: string[] | null;
+  config: Record<string, any> | null;
+  llm_model_id: string | null;
+  llm_model_name: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Agent 工具类型定义
+export interface AgentTool {
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  parameters: Record<string, any>;
+}
+
+// Agent 聊天请求类型
+export interface AgentChatRequest {
+  query: string;
+  session_id?: string;
+  stream?: boolean;
+}
+
+// Agent 创建请求类型
+export interface CreateAgentRequest {
+  name: string;
+  display_name?: string;
+  description?: string;
+  agent_type: string;
+  system_prompt?: string;
+  knowledge_base_ids?: string[];
+  tools?: string[];
+  config?: Record<string, any>;
+  llm_model_id?: string;
+  is_active?: boolean;
+  order?: number;
+}
+
+// Agent 更新请求类型
+export interface UpdateAgentRequest {
+  name?: string;
+  display_name?: string;
+  description?: string;
+  agent_type?: string;
+  system_prompt?: string;
+  knowledge_base_ids?: string[];
+  tools?: string[];
+  config?: Record<string, any>;
+  llm_model_id?: string;
+  is_active?: boolean;
+  order?: number;
+}
+
+// Agent 执行事件类型
+export interface AgentExecutionEvent {
+  type: 'start' | 'step' | 'tool_call' | 'complete' | 'error' | 'done';
+  content?: string;
+  output?: string;
+  error?: string;
+  step?: number;
+  tool_name?: string;
+  tool_input?: Record<string, any>;
+  tool_output?: any;
+}
+
+// ==================== 知识库相关类型 ====================
+
+// 知识库API类型（用于Agent管理界面选择知识库）
+export interface KnowledgeBaseAPI {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  document_count: number;
+  group_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==================== LLM 模型相关类型 ====================
+
+// LLM 模型选择项类型（用于Agent配置时选择模型）
+export interface LLMModelSelectItem {
+  id: string;
+  name: string;
+  display_name: string;
+  model_type: LLMModelType;
+  description?: string;
+  max_tokens?: number;
+  provider_name?: string;
+  temperature?: number;
+}
+
+// LLM Provider 类型
+export interface LLMProvider {
+  id: string;
+  name: string;
+  display_name: string;
+  provider_type: string;
+  is_active: boolean;
+  created_at: string;
+}

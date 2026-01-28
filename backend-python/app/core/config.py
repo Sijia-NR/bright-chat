@@ -56,6 +56,15 @@ class Settings(PydanticBaseSettings):
     IAS_TIMEOUT: int = 30
     IAS_MAX_RETRIES: int = 3
     IAS_STREAM_CHUNK_SIZE: int = 1024
+    IAS_API_FORMAT: str = "default"  # API format: default, openai, etc.
+
+    # ChromaDB settings
+    CHROMADB_HOST: str = "localhost"
+    CHROMADB_PORT: int = 8000
+
+    # RAG settings
+    RAG_USE_CHROMADB_EMBEDDING: bool = False
+    BGE_MODEL_PATH: str = "/data1/allresearchProject/Bright-Chat/models/Xorbits/bge-large-zh-v1.5"
 
     # Logging settings
     LOG_LEVEL: str = "INFO"

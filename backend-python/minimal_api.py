@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from enum import Enum
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Depends, status, Header
+from fastapi import FastAPI, HTTPException, Depends, status, Header, UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import asyncio
 import json
@@ -25,6 +25,7 @@ import secrets
 import time
 import logging
 import httpx
+from pathlib import Path
 
 # Configure logging - restore INFO level for detailed logs
 logging.basicConfig(level=logging.INFO)
@@ -34,31 +35,54 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.INFO)
 logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
-# Database setup
-DATABASE_URL = "mysql+pymysql://root:123456@47.116.218.206:13306/bright_chat"
+# RAG 相关导入
+from app.rag.config import get_rag_config, KNOWLEDGE_COLLECTION
+from app.rag.document_processor import DocumentProcessor
+
+# Agent 相关导入
+from app.agents.router import router as agents_router
+
+# 配置管理 - 使用 Settings 而非硬编码
+from app.core.config import settings
+
+# Database setup - 从环境变量读取
+DATABASE_URL = settings.DATABASE_URL
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # Password hashing
+import bcrypt
+
 def hash_password(password: str) -> str:
-    """Simple SHA256 hash for demo purposes"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash password using bcrypt"""
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed_password = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed_password.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password against hash"""
-    return hash_password(plain_password) == hashed_password
+    """Verify password against hash (supports both bcrypt and SHA256)"""
+    # Try bcrypt first
+    if hashed_password.startswith('$2b$') or hashed_password.startswith('$2a$'):
+        try:
+            return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+        except Exception:
+            pass
 
-# JWT settings
-SECRET_KEY = "your-super-secret-jwt-key-change-this-in-production"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+    # Fallback to SHA256 for backwards compatibility
+    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
-# App settings
-APP_NAME = "Bright-Chat API"
-API_PREFIX = "/api/v1"
-SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 18080
+# JWT settings - 从环境变量读取
+SECRET_KEY = settings.JWT_SECRET_KEY
+ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+
+# App settings - 从 Settings 读取，不使用硬编码
+APP_NAME = settings.APP_NAME
+API_PREFIX = settings.API_PREFIX
+SERVER_HOST = settings.SERVER_HOST
+SERVER_PORT = settings.SERVER_PORT
 
 # IAS settings - MockServer configuration
 IAS_BASE_URL = "http://localhost:18063"
@@ -146,11 +170,68 @@ class LLMModel(Base):
     # Relationships
     creator = relationship("User")
 
+# ==================== Knowledge Base Models ====================
+
+class KnowledgeGroup(Base):
+    """知识库分组表"""
+    __tablename__ = "knowledge_groups"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(100), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="group", cascade="all, delete-orphan")
+
+class KnowledgeBase(Base):
+    """知识库表"""
+    __tablename__ = "knowledge_bases"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    group_id = Column(String(36), ForeignKey("knowledge_groups.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    embedding_model = Column(String(100), default="bge-large-zh-v1.5")
+    chunk_size = Column(Integer, default=500)
+    chunk_overlap = Column(Integer, default=50)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User")
+    group = relationship("KnowledgeGroup", back_populates="knowledge_bases")
+    documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
+
+class Document(Base):
+    """文档表"""
+    __tablename__ = "documents"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id"), nullable=False)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(100), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    upload_status = Column(String(50), default="pending")  # pending, processing, completed, error
+    chunk_count = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    processed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    knowledge_base = relationship("KnowledgeBase", back_populates="documents")
+
 # Pydantic models
 class UserCreate(BaseModel):
     username: str
     password: str
     role: UserRole = UserRole.USER
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    role: Optional[UserRole] = None
 
 class UserResponse(BaseModel):
     id: str
@@ -274,6 +355,67 @@ class LLMModelListResponse(BaseModel):
     """LLM 模型列表响应"""
     models: List[LLMModelResponse]
     total: int
+
+# Knowledge Base Pydantic models
+class KnowledgeGroupCreate(BaseModel):
+    """创建知识库分组请求"""
+    name: str
+    description: Optional[str] = None
+
+class KnowledgeGroupResponse(BaseModel):
+    """知识库分组响应"""
+    id: str
+    name: str
+    user_id: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class KnowledgeBaseCreate(BaseModel):
+    """创建知识库请求"""
+    group_id: str
+    name: str
+    description: Optional[str] = None
+    embedding_model: str = "bge-large-zh-v1.5"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
+class KnowledgeBaseResponse(BaseModel):
+    """知识库响应"""
+    id: str
+    group_id: Optional[str] = None
+    user_id: str
+    name: str
+    description: Optional[str] = None
+    embedding_model: str
+    chunk_size: int
+    chunk_overlap: int
+    created_at: datetime
+    updated_at: datetime
+    document_count: Optional[int] = 0
+
+    class Config:
+        from_attributes = True
+
+class DocumentResponse(BaseModel):
+    """文档响应"""
+    id: str
+    knowledge_base_id: str
+    filename: str
+    file_type: str
+    file_size: int
+    upload_status: str
+    chunk_count: int
+    error_message: Optional[str] = None
+    processed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 # Utilities
 # This function is now defined above
@@ -436,6 +578,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# 创建上传目录
+UPLOAD_DIR = Path("uploads/documents")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"上传目录已创建/确认: {UPLOAD_DIR}")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -444,6 +591,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount Agent router
+app.include_router(agents_router, prefix=f"{API_PREFIX}/agents", tags=["agents"])
+logger.info("Agent routes mounted at /api/v1/agents")
 
 # Auth endpoints
 @app.post(f"{API_PREFIX}/auth/login", response_model=LoginResponse)
@@ -477,12 +628,52 @@ async def logout():
 
 # Admin user management
 @app.get(f"{API_PREFIX}/admin/users", response_model=List[UserResponse])
-async def get_users(db: Session = Depends(get_db)):
+async def get_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 检查 admin 权限
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
     users = db.query(User).all()
-    return [UserResponse.from_orm(user) for user in users]
+    return [UserResponse.model_validate(user) for user in users]
+
+@app.get(f"{API_PREFIX}/admin/users/{{user_id}}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 检查 admin 权限
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return UserResponse.model_validate(user)
 
 @app.post(f"{API_PREFIX}/admin/users", response_model=UserResponse)
-async def create_user(user_data: UserCreate, db: Session = Depends(get_db)):
+async def create_user(
+    user_data: UserCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 检查 admin 权限
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     # Check if username already exists
     existing_user = get_user_by_username(db, user_data.username)
     if existing_user:
@@ -492,7 +683,7 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db)):
         )
 
     # Create user
-    hashed_password = get_password_hash(user_data.password)
+    hashed_password = hash_password(user_data.password)
     db_user = User(
         username=user_data.username,
         password_hash=hashed_password,
@@ -502,10 +693,22 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
 
-    return UserResponse.from_orm(db_user)
+    return UserResponse.model_validate(db_user)
 
 @app.put(f"{API_PREFIX}/admin/users/{{user_id}}", response_model=UserResponse)
-async def update_user(user_id: str, user_data: UserCreate, db: Session = Depends(get_db)):
+async def update_user(
+    user_id: str,
+    user_data: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 检查 admin 权限
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -514,7 +717,7 @@ async def update_user(user_id: str, user_data: UserCreate, db: Session = Depends
         )
 
     # Check if username already exists for different user
-    if user_data.username != user.username:
+    if user_data.username and user_data.username != user.username:
         existing_user = get_user_by_username(db, user_data.username)
         if existing_user:
             raise HTTPException(
@@ -523,17 +726,28 @@ async def update_user(user_id: str, user_data: UserCreate, db: Session = Depends
             )
 
     # Update user fields
-    user.username = user_data.username
-    user.role = user_data.role
-    # Note: We don't update password through this endpoint for security
-    # Password should be updated through a dedicated endpoint
+    if user_data.username:
+        user.username = user_data.username
+    if user_data.role:
+        user.role = user_data.role
 
     db.commit()
     db.refresh(user)
-    return UserResponse.from_orm(user)
+    return UserResponse.model_validate(user)
 
 @app.delete(f"{API_PREFIX}/admin/users/{{user_id}}")
-async def delete_user(user_id: str, db: Session = Depends(get_db)):
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 检查 admin 权限
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -1089,10 +1303,696 @@ async def delete_model(
             detail=f"Failed to delete model: {str(e)}"
         )
 
+# ==================== Document Processing Functions ====================
+
+# Global RAG processor instance (lazy loading)
+_document_processor: Optional[DocumentProcessor] = None
+
+def get_document_processor() -> DocumentProcessor:
+    """获取文档处理器实例（单例模式）"""
+    global _document_processor
+    if _document_processor is None:
+        _document_processor = DocumentProcessor()
+    return _document_processor
+
+async def process_document_background(
+    doc_id: str,
+    file_path: str,
+    kb_id: str,
+    user_id: str,
+    max_retries: int = 3
+):
+    """
+    后台处理文档：解析、切片、向量化、存储到 ChromaDB（改进版）
+
+    Args:
+        doc_id: 文档 ID
+        file_path: 文件路径
+        kb_id: 知识库 ID
+        user_id: 用户 ID
+        max_retries: 最大重试次数（默认3次）
+
+    改进：
+    - 添加重试机制
+    - 详细的日志记录
+    - 更好的错误处理
+    """
+    processor = get_document_processor()
+
+    # 重试循环
+    for attempt in range(1, max_retries + 1):
+        db_session = None
+        try:
+            logger.info(f"{'='*60}")
+            logger.info(f"[文档处理] 尝试 {attempt}/{max_retries}: 处理文档 {doc_id}")
+            logger.info(f"  文件路径: {file_path}")
+            logger.info(f"  知识库ID: {kb_id}")
+            logger.info(f"  用户ID: {user_id}")
+
+            # 创建新的数据库会话
+            db_session = SessionLocal()
+
+            # 1. 检查文件是否存在
+            if not os.path.exists(file_path):
+                logger.error(f"  ❌ 文件不存在: {file_path}")
+                doc = db_session.query(Document).filter(Document.id == doc_id).first()
+                if doc:
+                    doc.upload_status = "error"
+                    doc.error_message = f"文件不存在: {file_path}"
+                    db_session.commit()
+                return
+
+            file_size = os.path.getsize(file_path)
+            logger.info(f"  ✅ 文件存在: {file_size} 字节")
+
+            # 2. 更新状态为处理中
+            doc = db_session.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                logger.error(f"  ❌ 文档记录不存在: {doc_id}")
+                return
+
+            doc.upload_status = "processing"
+            db_session.commit()
+            logger.info(f"  ✅ 状态已更新: processing")
+
+            # 3. 调用文档处理器
+            logger.info(f"  🔄 开始分块和向量化...")
+            result = await processor.process_document(
+                file_path=file_path,
+                knowledge_base_id=kb_id,
+                user_id=user_id,
+                filename=Path(file_path).name,
+                document_id=doc_id
+            )
+
+            logger.info(f"  ✅ 处理完成: {result}")
+
+            # 4. 更新数据库状态
+            if result.get("status") == "completed" or isinstance(result, list):
+                chunk_count = len(result) if isinstance(result, list) else result.get("chunk_count", 0)
+
+                doc.upload_status = "completed"
+                doc.chunk_count = chunk_count
+                doc.processed_at = func.now()
+                doc.error_message = None
+                db_session.commit()
+
+                logger.info(f"{'='*60}")
+                logger.info(f"✅ [文档处理] 文档 {doc_id} 处理完成")
+                logger.info(f"   Chunks: {chunk_count}")
+                logger.info(f"{'='*60}")
+
+                # 成功后退出重试循环
+                return
+            else:
+                error_msg = result.get("error", "处理失败")
+                logger.error(f"  ❌ 处理失败: {error_msg}")
+
+                if attempt < max_retries:
+                    wait_time = attempt * 2  # 指数退避
+                    logger.warning(f"  ⏳ {wait_time}秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise Exception(error_msg)
+
+        except Exception as e:
+            logger.error(f"  ❌ 尝试 {attempt} 失败: {e}", exc_info=True)
+
+            # 最后一次尝试失败后，更新为错误状态
+            if attempt == max_retries:
+                logger.error(f"{'='*60}")
+                logger.error(f"❌ [文档处理] 文档 {doc_id} 处理失败（已重试{max_retries}次）")
+                logger.error(f"   错误: {e}")
+                logger.error(f"{'='*60}")
+
+                if db_session:
+                    try:
+                        doc = db_session.query(Document).filter(Document.id == doc_id).first()
+                        if doc:
+                            doc.upload_status = "error"
+                            doc.error_message = f"处理失败（重试{max_retries}次后）: {str(e)}"
+                            db_session.commit()
+                    except Exception as commit_error:
+                        logger.error(f"  ❌ 更新错误状态失败: {commit_error}")
+            else:
+                # 还有重试机会，继续循环
+                wait_time = attempt * 2
+                logger.warning(f"  ⏳ {wait_time}秒后重试...")
+                await asyncio.sleep(wait_time)
+
+        finally:
+            if db_session:
+                try:
+                    db_session.close()
+                except:
+                    pass
+
+    except Exception as e:
+        logger.error(f"[文档处理] 文档 {doc_id} 发生未处理的异常: {e}", exc_info=True)
+
+# ==================== Knowledge Base APIs ====================
+
+@app.get(API_PREFIX + "/knowledge/groups", response_model=List[KnowledgeGroupResponse])
+async def get_knowledge_groups(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取当前用户的知识库分组列表"""
+    groups = db.query(KnowledgeGroup).filter(
+        KnowledgeGroup.user_id == current_user.id
+    ).order_by(KnowledgeGroup.created_at.desc()).all()
+    return [KnowledgeGroupResponse.from_orm(g) for g in groups]
+
+@app.post(API_PREFIX + "/knowledge/groups", response_model=KnowledgeGroupResponse)
+async def create_knowledge_group(
+    group_data: KnowledgeGroupCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """创建知识库分组"""
+    # 检查名称是否重复
+    existing = db.query(KnowledgeGroup).filter(
+        KnowledgeGroup.user_id == current_user.id,
+        KnowledgeGroup.name == group_data.name
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="分组名称已存在")
+
+    group = KnowledgeGroup(
+        name=group_data.name,
+        description=group_data.description,
+        user_id=current_user.id
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return KnowledgeGroupResponse.from_orm(group)
+
+@app.delete(API_PREFIX + "/knowledge/groups/{group_id}")
+async def delete_knowledge_group(
+    group_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """删除知识库分组（及其所有知识库）"""
+    group = db.query(KnowledgeGroup).filter(
+        KnowledgeGroup.id == group_id,
+        KnowledgeGroup.user_id == current_user.id
+    ).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="分组不存在")
+
+    db.delete(group)
+    db.commit()
+    return {"message": "分组已删除"}
+
+@app.get(API_PREFIX + "/knowledge/bases", response_model=List[KnowledgeBaseResponse])
+async def get_knowledge_bases(
+    group_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取知识库列表"""
+    query = db.query(KnowledgeBase).filter(
+        KnowledgeBase.user_id == current_user.id
+    )
+
+    if group_id:
+        query = query.filter(KnowledgeBase.group_id == group_id)
+
+    bases = query.order_by(KnowledgeBase.created_at.desc()).all()
+
+    # 添加文档计数
+    result = []
+    for base in bases:
+        base_dict = KnowledgeBaseResponse.from_orm(base).dict()
+        doc_count = db.query(Document).filter(
+            Document.knowledge_base_id == base.id,
+            Document.upload_status == "completed"
+        ).count()
+        base_dict["document_count"] = doc_count
+        result.append(KnowledgeBaseResponse(**base_dict))
+
+    return result
+
+@app.post(API_PREFIX + "/knowledge/bases", response_model=KnowledgeBaseResponse)
+async def create_knowledge_base(
+    base_data: KnowledgeBaseCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """创建知识库"""
+    # 验证分组存在且属于当前用户
+    group = db.query(KnowledgeGroup).filter(
+        KnowledgeGroup.id == base_data.group_id,
+        KnowledgeGroup.user_id == current_user.id
+    ).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="分组不存在")
+
+    # 检查名称是否重复
+    existing = db.query(KnowledgeBase).filter(
+        KnowledgeBase.group_id == base_data.group_id,
+        KnowledgeBase.name == base_data.name
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="知识库名称已存在")
+
+    base = KnowledgeBase(
+        group_id=base_data.group_id,
+        user_id=current_user.id,
+        name=base_data.name,
+        description=base_data.description,
+        embedding_model=base_data.embedding_model,
+        chunk_size=base_data.chunk_size,
+        chunk_overlap=base_data.chunk_overlap
+    )
+    db.add(base)
+    db.commit()
+    db.refresh(base)
+    return KnowledgeBaseResponse.from_orm(base)
+
+@app.get(API_PREFIX + "/knowledge/bases/{kb_id}", response_model=KnowledgeBaseResponse)
+async def get_knowledge_base(
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取知识库详情"""
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    response = KnowledgeBaseResponse.from_orm(base).dict()
+    doc_count = db.query(Document).filter(
+        Document.knowledge_base_id == base.id,
+        Document.upload_status == "completed"
+    ).count()
+    response["document_count"] = doc_count
+    return KnowledgeBaseResponse(**response)
+
+@app.delete(API_PREFIX + "/knowledge/bases/{kb_id}")
+async def delete_knowledge_base(
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """删除知识库（及其所有文档）"""
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    db.delete(base)
+    db.commit()
+    return {"message": "知识库已删除"}
+
+@app.get(API_PREFIX + "/knowledge/bases/{kb_id}/documents", response_model=List[DocumentResponse])
+async def get_documents(
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取知识库的文档列表"""
+    # 验证知识库存在且属于当前用户
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    docs = db.query(Document).filter(
+        Document.knowledge_base_id == kb_id
+    ).order_by(Document.created_at.desc()).all()
+    return [DocumentResponse.from_orm(d) for d in docs]
+
+@app.get(API_PREFIX + "/knowledge/bases/{kb_id}/documents/{doc_id}", response_model=DocumentResponse)
+async def get_document(
+    kb_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取文档详情"""
+    # 验证知识库存在且属于当前用户
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.knowledge_base_id == kb_id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    return DocumentResponse.from_orm(doc)
+
+@app.get(API_PREFIX + "/knowledge/bases/{kb_id}/documents/{doc_id}/chunks")
+async def get_document_chunks(
+    kb_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """获取文档切片详情"""
+    # 验证知识库存在且属于当前用户
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    # 验证文档存在
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.knowledge_base_id == kb_id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    # 从 ChromaDB 获取切片
+    try:
+        rag_config = get_rag_config()
+        collection = rag_config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+
+        # 查询该文档的所有切片
+        results = collection.get(
+            where={"document_id": doc_id}
+        )
+
+        chunks = []
+        for i, (text, metadata) in enumerate(zip(results.get('documents', []), results.get('metadatas', []))):
+            chunks.append({
+                "id": f"{doc_id}_chunk_{i}",
+                "chunk_index": metadata.get("chunk_index", i),
+                "content": text,
+                "metadata": metadata
+            })
+
+        return chunks
+    except Exception as e:
+        logger.error(f"获取文档切片失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取切片失败: {str(e)}")
+
+
+@app.get(API_PREFIX + "/knowledge/search")
+async def search_knowledge(
+    query: str,
+    knowledge_base_ids: str,
+    top_k: int = 5,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """知识检索"""
+    if not query:
+        raise HTTPException(status_code=400, detail="查询内容不能为空")
+
+    # 解析知识库 ID 列表
+    try:
+        kb_ids = knowledge_base_ids.split(',')
+    except:
+        raise HTTPException(status_code=400, detail="知识库 ID 格式错误")
+
+    # 验证所有知识库都属于当前用户
+    bases = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id.in_(kb_ids),
+        KnowledgeBase.user_id == current_user.id
+    ).all()
+    if len(bases) != len(kb_ids):
+        raise HTTPException(status_code=403, detail="无权访问某些知识库")
+
+    try:
+        rag_config = get_rag_config()
+        collection = rag_config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+
+        # 使用与向量化相同的嵌入模型
+        query_embedding = rag_config.embedding_model.encode([query])
+
+        # 执行检索
+        results = collection.query(
+            query_embeddings=query_embedding,
+            n_results=top_k,
+            where={"knowledge_base_id": {"$in": kb_ids}}
+        )
+
+        # 格式化结果
+        formatted_results = []
+        if results and 'documents' in results and results['documents']:
+            for i, doc in enumerate(results['documents'][0]):
+                if i < len(results.get('metadatas', [[]])[0]):
+                    metadata = results['metadatas'][0][i]
+                    distance = results.get('distances', [[]])[0][i] if 'distances' in results else None
+                    formatted_results.append({
+                        "content": doc,
+                        "metadata": metadata,
+                        "score": 1 - distance if distance else 0.0,
+                        "knowledge_base_id": metadata.get("knowledge_base_id"),
+                        "document_id": metadata.get("document_id"),
+                        "chunk_index": metadata.get("chunk_index")
+                    })
+
+        return {"results": formatted_results, "query": query, "total": len(formatted_results)}
+    except Exception as e:
+        logger.error(f"知识检索失败: {e}")
+        raise HTTPException(status_code=500, detail=f"检索失败: {str(e)}")
+
+
+@app.delete(API_PREFIX + "/knowledge/bases/{kb_id}/documents/{doc_id}")
+async def delete_document(
+    kb_id: str,
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """删除文档"""
+    # 验证知识库存在且属于当前用户
+    base = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == kb_id,
+        KnowledgeBase.user_id == current_user.id
+    ).first()
+    if not base:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.knowledge_base_id == kb_id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    db.delete(doc)
+    db.commit()
+    return {"message": "文档已删除"}
+
+@app.post(API_PREFIX + "/knowledge/bases/{kb_id}/documents", response_model=DocumentResponse)
+async def upload_document(
+    kb_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    sync: bool = False,  # 新增：是否同步处理
+    chunk_size: int = 500,  # 新增：分块大小
+    chunk_overlap: int = 50,  # 新增：分块重叠
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    上传文档到知识库（支持同步/异步处理）
+
+    流程：
+    1. 验证知识库权限
+    2. 保存文件到临时目录
+    3. 创建文档记录（状态=pending）
+    4. 同步模式：立即处理文档；异步模式：启动后台任务
+    5. 返回响应
+
+    参数：
+    - sync: true=同步处理（立即完成），false=异步处理（后台任务）
+    - chunk_size: 文本分块大小（默认500字符）
+    - chunk_overlap: 分块重叠大小（默认50字符）
+    """
+    temp_file_path = None
+    try:
+        # 1. 验证知识库存在且属于当前用户
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.user_id == current_user.id
+        ).first()
+
+        if not kb:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+
+        # 2. 保存文件到临时目录
+        temp_dir = Path("uploads/documents")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        file_extension = Path(file.filename).suffix
+        temp_file_path = temp_dir / f"{uuid.uuid4()}{file_extension}"
+
+        with open(temp_file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        logger.info(f"[文档上传] 文件已保存到: {temp_file_path} (大小: {len(content)} 字节)")
+
+        # 3. 创建文档记录（状态：pending）
+        document = Document(
+            knowledge_base_id=kb_id,
+            filename=file.filename,
+            file_type=file.content_type or "application/octet-stream",
+            file_size=len(content),
+            upload_status="pending"
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+
+        logger.info(f"[文档上传] 文档记录已创建: {document.id}")
+
+        # 4. 根据sync参数选择处理方式
+        if sync:
+            # 同步处理模式（立即完成）
+            logger.info(f"[文档上传] 使用同步处理模式")
+            try:
+                processor = get_document_processor()
+
+                # 直接处理文档
+                chunks = await processor.process_document(
+                    file_path=str(temp_file_path),
+                    knowledge_base_id=kb_id,
+                    user_id=current_user.id,
+                    filename=file.filename,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    document_id=document.id
+                )
+
+                # 更新文档状态
+                document.upload_status = "completed"
+                document.chunk_count = len(chunks)
+                db.commit()
+
+                logger.info(f"✅ [文档上传] 同步处理成功: {len(chunks)} 个chunks")
+            except Exception as e:
+                # 同步处理失败
+                document.upload_status = "error"
+                document.error_message = str(e)
+                db.commit()
+                logger.error(f"❌ [文档上传] 同步处理失败: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
+        else:
+            # 异步处理模式（原有逻辑）
+            logger.info(f"[文档上传] 使用异步处理模式")
+            background_tasks.add_task(
+                process_document_background,
+                document.id,
+                str(temp_file_path),
+                kb_id,
+                current_user.id
+            )
+            logger.info(f"[文档上传] 后台处理任务已启动: {document.id}")
+
+        return document
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[文档上传] 失败: {e}", exc_info=True)
+
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+        raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+
 # Health check
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "version": "1.0.0"}
+
+# Detailed system health check
+@app.get(f"{API_PREFIX}/system/health")
+async def system_health_check(current_user: User = Depends(get_current_user)):
+    """
+    系统健康检查（详细版）
+
+    检查项目：
+    - 数据库连接
+    - ChromaDB连接和collection状态
+    - BGE模型加载状态
+    """
+    health = {
+        "timestamp": datetime.now().isoformat(),
+        "status": "healthy",
+        "components": {}
+    }
+
+    # 1. 检查数据库
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        health["components"]["database"] = {"status": "healthy", "message": "数据库连接正常"}
+    except Exception as e:
+        health["components"]["database"] = {"status": "unhealthy", "error": str(e)}
+        health["status"] = "degraded"
+
+    # 2. 检查ChromaDB
+    try:
+        rag_config = get_rag_config()
+
+        # 检查连接
+        if not rag_config.health_check():
+            health["components"]["chromadb"] = {"status": "down", "error": "ChromaDB连接失败"}
+            health["status"] = "unhealthy"
+        else:
+            # 检查collection健康状态
+            try:
+                collection = rag_config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+                count = collection.count()
+                health["components"]["chromadb"] = {
+                    "status": "healthy",
+                    "message": "ChromaDB连接正常",
+                    "collection": KNOWLEDGE_COLLECTION,
+                    "vector_count": count
+                }
+            except Exception as e:
+                health["components"]["chromadb"] = {
+                    "status": "degraded",
+                    "message": "ChromaDB连接正常，但collection有问题",
+                    "error": str(e)
+                }
+                health["status"] = "degraded"
+
+    except Exception as e:
+        health["components"]["chromadb"] = {"status": "down", "error": str(e)}
+        health["status"] = "unhealthy"
+
+    # 3. 检查BGE模型
+    try:
+        rag_config = get_rag_config()
+        model = rag_config.embedding_model
+        dimension = model.get_sentence_embedding_dimension()
+        health["components"]["embedding_model"] = {
+            "status": "healthy",
+            "model_name": rag_config.embedding_model_name,
+            "dimension": dimension
+        }
+    except Exception as e:
+        health["components"]["embedding_model"] = {"status": "unhealthy", "error": str(e)}
+        health["status"] = "degraded"
+
+    return health
 
 # Root
 @app.get("/")
@@ -1123,6 +2023,81 @@ def create_default_admin():
 
 # Create default admin on startup
 create_default_admin()
+
+# Startup event: 初始化和检查系统组件
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时的初始化和健康检查"""
+    logger.info("="*60)
+    logger.info("系统初始化")
+    logger.info("="*60)
+
+    # 1. 检查数据库连接
+    logger.info("1. 检查数据库连接...")
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        logger.info("   ✅ 数据库连接正常")
+    except Exception as e:
+        logger.error(f"   ❌ 数据库连接失败: {e}")
+
+    # 2. 检查ChromaDB并自动修复
+    logger.info("2. 检查ChromaDB...")
+    try:
+        rag_config = get_rag_config()
+
+        if not rag_config.health_check():
+            logger.error("   ❌ ChromaDB连接失败")
+            logger.error("   请启动ChromaDB:")
+            logger.error("   docker run -d -p 8002:8000 --name bright-chat-chromadb chromadb/chroma:latest")
+        else:
+            logger.info("   ✅ ChromaDB连接正常")
+
+            # 检查并修复knowledge_chunks collection
+            logger.info("3. 检查knowledge_chunks collection...")
+            try:
+                collection = rag_config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+                count = collection.count()
+                logger.info(f"   ✅ Collection健康 ({count} 个向量)")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Collection检查失败: {e}")
+                logger.info("   尝试自动修复...")
+
+                try:
+                    # 尝试重建collection
+                    rag_config.chroma_client.delete_collection(KNOWLEDGE_COLLECTION)
+                    rag_config.chroma_client.create_collection(KNOWLEDGE_COLLECTION)
+                    logger.info("   ✅ Collection重建成功")
+                except Exception as repair_error:
+                    logger.error(f"   ❌ Collection修复失败: {repair_error}")
+
+    except Exception as e:
+        logger.error(f"   ❌ ChromaDB初始化失败: {e}")
+
+    # 3. 检查BGE模型
+    logger.info("4. 检查BGE模型...")
+    try:
+        # 预加载模型（首次加载会较慢）
+        rag_config = get_rag_config()
+        model = rag_config.embedding_model
+        dimension = model.get_sentence_embedding_dimension()
+        logger.info(f"   ✅ BGE模型加载成功 (维度: {dimension})")
+    except Exception as e:
+        logger.warning(f"   ⚠️  BGE模型加载失败: {e}")
+        logger.warning("   向量化功能将不可用，但其他功能正常")
+
+    logger.info("="*60)
+    logger.info("系统初始化完成")
+    logger.info("="*60)
+
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时的清理"""
+    logger.info("系统正在关闭...")
+    # 这里可以添加清理逻辑
+    logger.info("系统已关闭")
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Users, ArrowLeft, Trash2, Loader2, User as UserIcon, Shield, XCircle, CheckCircle } from 'lucide-react';
+import { UserPlus, Users, ArrowLeft, Trash2, Loader2, User as UserIcon, Shield, XCircle, CheckCircle, Bot } from 'lucide-react';
 import { adminService } from '../services/adminService';
 import { User, UserRole } from '../types';
 import ModelManagementPanel from './ModelManagementPanel';
+import AgentManagementPanel from './AgentManagementPanel';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -11,11 +12,12 @@ interface AdminPanelProps {
   onModelsChange?: () => void;
 }
 
-type AdminView = 'users' | 'models';
+type AdminView = 'users' | 'models' | 'agents';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsChange }) => {
   const [view, setView] = useState<AdminView>('models');
   const [modelRefreshTrigger, setModelRefreshTrigger] = useState(0);
+  const [agentRefreshTrigger, setAgentRefreshTrigger] = useState(0);
 
   // 用户管理状态
   const [users, setUsers] = useState<User[]>([]);
@@ -110,6 +112,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsCh
           >
             <Shield size={20} />
             LLM 模型管理
+          </button>
+          <button
+            onClick={() => setView('agents')}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
+              view === 'agents'
+                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100'
+                : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+            }`}
+          >
+            <Bot size={20} />
+            Agent 管理
           </button>
         </div>
 
@@ -221,6 +234,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsCh
             </div>
           </section>
         </div>
+        ) : view === 'agents' ? (
+          <AgentManagementPanel
+            key={agentRefreshTrigger}
+            onAgentChange={() => {
+              setAgentRefreshTrigger(prev => prev + 1);
+            }}
+          />
         ) : (
           <ModelManagementPanel
             key={modelRefreshTrigger}
