@@ -51,7 +51,7 @@ export const knowledgeService = {
 
     return data.groups.map((g: KnowledgeGroupResponse) => ({
       id: g.id,
-      userId: '',  // 后端暂未返回，需填充
+      userId: g.user_id,  // 使用后端返回的 user_id
       name: g.name,
       description: g.description || undefined,
       order: g.order,
@@ -145,12 +145,68 @@ export const knowledgeService = {
   transformGroupResponse(resp: KnowledgeGroupResponse): KnowledgeGroup {
     return {
       id: resp.id,
-      userId: '',
+      userId: resp.user_id,  // 使用后端返回的 user_id
       name: resp.name,
       description: resp.description || undefined,
       order: resp.order,
       createdAt: new Date(resp.created_at).getTime(),
       updatedAt: new Date(resp.updated_at).getTime()
     };
+  },
+
+  // ==================== 文档相关方法 ====================
+
+  async getDocuments(kbId: string): Promise<any[]> {
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/bases/${kbId}/documents`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    });
+
+    if (!resp.ok) throw new Error('获取文档列表失败');
+    const data = await resp.json();
+    return data;
+  },
+
+  async getDocumentChunks(docId: string, kbId: string, offset: number = 0, limit?: number): Promise<any> {
+    const params = new URLSearchParams({ kb_id: kbId, offset: offset.toString() });
+    if (limit !== undefined) params.append('limit', limit.toString());
+
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/documents/${docId}/chunks?${params}`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    });
+
+    if (!resp.ok) throw new Error('获取文档切片失败');
+    return resp.json();
+  },
+
+  async uploadDocument(kbId: string, file: File): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/bases/${kbId}/documents`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
+      body: formData
+    });
+
+    if (!resp.ok) throw new Error('文档上传失败');
+    return resp.json();
+  },
+
+  async deleteDocument(docId: string): Promise<void> {
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/documents/${docId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    });
+
+    if (!resp.ok) throw new Error('删除文档失败');
+  },
+
+  async deleteKnowledgeBase(kbId: string): Promise<void> {
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/bases/${kbId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    });
+
+    if (!resp.ok) throw new Error('删除知识库失败');
   }
 };

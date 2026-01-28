@@ -262,98 +262,144 @@ class DocumentProcessor:
         Returns:
             处理结果字典
         """
-        # 使用传入的 document_id,如果没有则生成新的
         document_id = document_id or str(uuid.uuid4())
         start_time = datetime.now()
 
         try:
             logger.info(f"开始处理文档: {filename}")
 
-            # 1. 确定文件类型
-            file_type = self.get_file_type(filename)
-            if not file_type:
-                raise ValueError(f"不支持的文件类型: {filename}")
+            # 1. 验证并加载文档
+            file_type, documents = await self._validate_and_load_document(filename, file_path)
 
-            # 2. 加载文档
-            documents = await self.load_document(file_path, file_type)
-
-            # 3. 分割文档
+            # 2. 分割文档
             chunks = self.split_documents(documents, chunk_size, chunk_overlap)
 
-            # 4. 准备 ChromaDB 数据
-            chunk_ids = []
-            chunk_documents = []
-            chunk_metadatas = []
+            # 3. 准备 ChromaDB 数据
+            chunk_ids, chunk_documents, chunk_metadatas = self._prepare_chunk_data(
+                document_id, knowledge_base_id, user_id, filename, file_type, chunks
+            )
 
-            for idx, chunk in enumerate(chunks):
-                chunk_id = f"{document_id}_chunk_{idx}"
-                chunk_ids.append(chunk_id)
-                chunk_documents.append(chunk.page_content)
-                chunk_metadatas.append({
-                    "document_id": document_id,
-                    "knowledge_base_id": knowledge_base_id,
-                    "user_id": user_id,
-                    "chunk_index": idx,
-                    "filename": filename,
-                    "file_type": file_type,
-                    "source": filename
-                })
+            # 4. 存储到 ChromaDB
+            await self._store_to_chromadb(chunk_ids, chunk_documents, chunk_metadatas, len(chunks))
 
-            # 5. 存储到 ChromaDB（使用自带向量模型）
-            # 如果配置了 use_chromadb_embedding，ChromaDB会自动生成向量
-            if self.config.use_chromadb_embedding:
-                logger.info(f"准备存储 {len(chunks)} 个块到 ChromaDB (使用自带向量模型)...")
-                collection = self.config.get_or_create_collection(
-                    KNOWLEDGE_COLLECTION,
-                    use_embedding=True
-                )
-                logger.info("Collection 已获取，开始添加数据...")
-                # 直接传递 documents，ChromaDB 会自动调用其内置的 embedding function
-                collection.add(
-                    ids=chunk_ids,
-                    documents=chunk_documents,
-                    metadatas=chunk_metadatas
-                )
-                logger.info(f"✅ 使用 ChromaDB 自带向量模型成功处理 {len(chunks)} 个块")
-            else:
-                # 使用本地 embedding 模型生成向量
-                logger.info("使用本地 embedding 模型生成向量")
-                texts = [chunk.page_content for chunk in chunks]
-                embeddings = await self.embed_documents(texts)
-
-                collection = self.config.get_or_create_collection(KNOWLEDGE_COLLECTION)
-                collection.add(
-                    ids=chunk_ids,
-                    embeddings=embeddings,
-                    documents=chunk_documents,
-                    metadatas=chunk_metadatas
-                )
-
-            # 7. 计算处理时间
-            processing_time = (datetime.now() - start_time).total_seconds()
-
-            result = {
-                "document_id": document_id,
-                "filename": filename,
-                "file_type": file_type,
-                "chunk_count": len(chunks),
-                "status": "completed",
-                "processing_time": processing_time,
-                "message": f"文档处理成功，共 {len(chunks)} 个块"
-            }
-
-            logger.info(f"文档处理完成: {filename} ({len(chunks)} 块, {processing_time:.2f}秒)")
-            return result
+            # 5. 生成结果
+            return self._generate_result(document_id, filename, file_type, len(chunks), start_time)
 
         except Exception as e:
             logger.error(f"文档处理失败 {filename}: {e}")
-            return {
+            return self._generate_error_result(document_id, filename, str(e))
+
+    async def _validate_and_load_document(self, filename: str, file_path: str) -> tuple:
+        """验证文件类型并加载文档"""
+        file_type = self.get_file_type(filename)
+        if not file_type:
+            raise ValueError(f"不支持的文件类型: {filename}")
+
+        documents = await self.load_document(file_path, file_type)
+        return file_type, documents
+
+    def _prepare_chunk_data(
+        self,
+        document_id: str,
+        knowledge_base_id: str,
+        user_id: str,
+        filename: str,
+        file_type: str,
+        chunks: list
+    ) -> tuple:
+        """准备 ChromaDB 所需的数据"""
+        chunk_ids = []
+        chunk_documents = []
+        chunk_metadatas = []
+
+        for idx, chunk in enumerate(chunks):
+            chunk_id = f"{document_id}_chunk_{idx}"
+            chunk_ids.append(chunk_id)
+            chunk_documents.append(chunk.page_content)
+            chunk_metadatas.append({
                 "document_id": document_id,
+                "knowledge_base_id": knowledge_base_id,
+                "user_id": user_id,
+                "chunk_index": idx,
                 "filename": filename,
-                "status": "failed",
-                "error": str(e),
-                "message": f"文档处理失败: {str(e)}"
-            }
+                "file_type": file_type,
+                "source": filename
+            })
+
+        return chunk_ids, chunk_documents, chunk_metadatas
+
+    async def _store_to_chromadb(
+        self,
+        chunk_ids: list,
+        chunk_documents: list,
+        chunk_metadatas: list,
+        chunk_count: int
+    ):
+        """存储数据到 ChromaDB"""
+        if self.config.use_chromadb_embedding:
+            logger.info(f"准备存储 {chunk_count} 个块到 ChromaDB (使用自带向量模型)...")
+            collection = self.config.get_or_create_collection(
+                KNOWLEDGE_COLLECTION,
+                use_embedding=True
+            )
+            logger.info("Collection 已获取，开始添加数据...")
+            collection.add(
+                ids=chunk_ids,
+                documents=chunk_documents,
+                metadatas=chunk_metadatas
+            )
+            logger.info(f"✅ 使用 ChromaDB 自带向量模型成功处理 {chunk_count} 个块")
+        else:
+            logger.info("使用本地 embedding 模型生成向量")
+            texts = chunk_documents
+            embeddings = await self.embed_documents(texts)
+
+            collection = self.config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+            collection.add(
+                ids=chunk_ids,
+                embeddings=embeddings,
+                documents=chunk_documents,
+                metadatas=chunk_metadatas
+            )
+
+    def _generate_result(
+        self,
+        document_id: str,
+        filename: str,
+        file_type: str,
+        chunk_count: int,
+        start_time: datetime
+    ) -> Dict[str, Any]:
+        """生成处理成功结果"""
+        processing_time = (datetime.now() - start_time).total_seconds()
+
+        result = {
+            "document_id": document_id,
+            "filename": filename,
+            "file_type": file_type,
+            "chunk_count": chunk_count,
+            "status": "completed",
+            "processing_time": processing_time,
+            "message": f"文档处理成功，共 {chunk_count} 个块"
+        }
+
+        logger.info(f"文档处理完成: {filename} ({chunk_count} 块, {processing_time:.2f}秒)")
+        return result
+
+    def _generate_error_result(
+        self,
+        document_id: str,
+        filename: str,
+        error_message: str
+    ) -> Dict[str, Any]:
+        """生成处理失败结果"""
+        return {
+            "document_id": document_id,
+            "filename": filename,
+            "status": "failed",
+            "error": error_message,
+            "message": f"文档处理失败: {error_message}"
+        }
 
     async def delete_document(self, document_id: str) -> bool:
         """

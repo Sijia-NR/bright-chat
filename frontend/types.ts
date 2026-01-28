@@ -310,6 +310,44 @@ export interface KnowledgeBaseAPI {
   updated_at: string;
 }
 
+// 文档API类型
+export interface DocumentAPI {
+  id: string;
+  knowledge_base_id: string;
+  filename: string;
+  file_type: string | null;
+  file_size: number | null;
+  chunk_count: number;
+  upload_status: string;
+  error_message: string | null;
+  uploaded_at: string;
+  processed_at: string | null;
+}
+
+// 文档切片类型
+export interface DocumentChunk {
+  id: string;
+  chunk_index: number;
+  content: string;
+  metadata: {
+    document_id: string;
+    knowledge_base_id: string;
+    user_id: string;
+    filename: string;
+    file_type: string;
+    chunk_index: number;
+  };
+}
+
+// 文档切片响应
+export interface DocumentChunksResponse {
+  document_id: string;
+  filename: string;
+  chunks: DocumentChunk[];
+  total_count: number;
+  returned_count: number;
+}
+
 // ==================== LLM 模型相关类型 ====================
 
 // LLM 模型选择项类型（用于Agent配置时选择模型）

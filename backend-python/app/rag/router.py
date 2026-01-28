@@ -41,6 +41,10 @@ from .retriever import RAGRetriever
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# 常量定义
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB - 最大文件上传大小
+TEMP_UPLOAD_DIR = "/tmp/bright_chat_uploads"  # 临时文件上传目录
+
 # 全局处理器实例
 document_processor: Optional[DocumentProcessor] = None
 rag_retriever: Optional[RAGRetriever] = None
@@ -60,6 +64,30 @@ def get_rag_retriever():
     if rag_retriever is None:
         rag_retriever = RAGRetriever()
     return rag_retriever
+
+
+def cleanup_temp_files(document_id: str, filename: str):
+    """
+    清理文档相关的临时文件
+
+    Args:
+        document_id: 文档 ID
+        filename: 原始文件名（用于获取扩展名）
+    """
+    try:
+        # 清理所有匹配的临时文件
+        if os.path.exists(TEMP_UPLOAD_DIR):
+            for file in os.listdir(TEMP_UPLOAD_DIR):
+                if file.startswith(document_id) or file.endswith(f"_{document_id}"):
+                    file_path = os.path.join(TEMP_UPLOAD_DIR, file)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            logger.info(f"已删除临时文件: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"删除临时文件失败 {file_path}: {e}")
+    except Exception as e:
+        logger.error(f"清理临时文件失败: {e}")
 
 
 # ==================== 知识库分组 API ====================
@@ -327,6 +355,16 @@ async def upload_document(
                 detail=f"不支持的文件类型。支持的类型: {list(processor.SUPPORTED_FILE_TYPES.keys())}"
             )
 
+        # 验证文件大小
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"文件大小超过限制 ({MAX_FILE_SIZE / 1024 / 1024:.0f}MB)"
+            )
+        # 重置文件指针供后续使用
+        await file.seek(0)
+
         # 创建文档记录
         doc_id = str(uuid.uuid4())
         document = Document(
@@ -339,10 +377,15 @@ async def upload_document(
         db.add(document)
         db.commit()
 
-        # 保存文件到临时目录
+        # 保存文件到临时目录（使用安全的文件名）
         temp_dir = "/tmp/bright_chat_uploads"
         os.makedirs(temp_dir, exist_ok=True)
-        temp_file_path = os.path.join(temp_dir, f"{doc_id}_{file.filename}")
+
+        # 安全处理文件名：防止路径遍历攻击
+        from pathlib import Path
+        file_ext = Path(file.filename).suffix
+        safe_filename = f"{doc_id}_{uuid.uuid4().hex}{file_ext}"
+        temp_file_path = os.path.join(temp_dir, safe_filename)
 
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -384,10 +427,10 @@ async def process_document_background(
     db: Session
 ):
     """后台处理文档"""
-    try:
-        from ..core.database import SessionLocal
-        db = SessionLocal()
+    from ..core.database import SessionLocal
+    db = SessionLocal()
 
+    try:
         processor = get_document_processor()
 
         # 处理文档
@@ -413,8 +456,6 @@ async def process_document_background(
         if os.path.exists(file_path):
             os.remove(file_path)
 
-        db.close()
-
     except Exception as e:
         logger.error(f"后台处理文档失败: {e}")
         # 更新文档状态为失败
@@ -425,6 +466,12 @@ async def process_document_background(
                 document.error_message = str(e)
                 document.processed_at = datetime.now()
                 db.commit()
+        except Exception as update_error:
+            logger.error(f"更新文档状态失败: {update_error}")
+    finally:
+        # 确保数据库连接关闭
+        try:
+            db.close()
         except:
             pass
 
@@ -484,6 +531,9 @@ async def delete_document(
         processor = get_document_processor()
         await processor.delete_document(doc_id)
 
+        # 清理临时文件
+        cleanup_temp_files(doc_id, document.filename)
+
         # 删除数据库记录
         db.delete(document)
         db.commit()
@@ -493,6 +543,59 @@ async def delete_document(
         raise
     except Exception as e:
         logger.error(f"删除文档失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/{doc_id}/chunks")
+async def get_document_chunks(
+    doc_id: str,
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    offset: int = 0,
+    limit: Optional[int] = None
+):
+    """获取文档的切片列表"""
+    try:
+        # 验证文档和权限
+        document = db.query(Document).filter(
+            Document.id == doc_id,
+            Document.knowledge_base_id == kb_id
+        ).first()
+
+        if not document:
+            raise HTTPException(status_code=404, detail="文档不存在")
+
+        # 验证知识库权限
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.user_id == current_user.id
+        ).first()
+        if not kb:
+            raise HTTPException(status_code=403, detail="无权限访问此文档")
+
+        # 获取切片数据
+        processor = get_document_processor()
+        chunks_data = await processor.get_document_chunks(
+            document_id=doc_id,
+            knowledge_base_id=kb_id,
+            user_id=current_user.id,
+            include_embeddings=False,
+            offset=offset,
+            limit=limit
+        )
+
+        return {
+            "document_id": doc_id,
+            "filename": document.filename,
+            "chunks": chunks_data["chunks"],
+            "total_count": chunks_data["total_count"],
+            "returned_count": chunks_data["returned_count"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取文档切片失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
