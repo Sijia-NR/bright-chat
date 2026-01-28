@@ -10,11 +10,12 @@ interface AdminPanelProps {
   currentUser: User;
   onBack: () => void;
   onModelsChange?: () => void;
+  onAgentChange?: () => void;
 }
 
 type AdminView = 'users' | 'models' | 'agents';
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsChange }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsChange, onAgentChange }) => {
   const [view, setView] = useState<AdminView>('models');
   const [modelRefreshTrigger, setModelRefreshTrigger] = useState(0);
   const [agentRefreshTrigger, setAgentRefreshTrigger] = useState(0);
@@ -236,9 +237,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onBack, onModelsCh
         </div>
         ) : view === 'agents' ? (
           <AgentManagementPanel
-            key={agentRefreshTrigger}
+            refreshTrigger={agentRefreshTrigger}
             onAgentChange={() => {
               setAgentRefreshTrigger(prev => prev + 1);
+              onAgentChange?.();  // 通知 App.tsx 刷新 Agent 列表
             }}
           />
         ) : (

@@ -38,6 +38,7 @@ const App: React.FC = () => {
   // 新增状态：Agent 和知识库
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [agentRefreshTrigger, setAgentRefreshTrigger] = useState(0);
   const [knowledgeGroups, setKnowledgeGroups] = useState<KnowledgeGroup[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 
@@ -111,7 +112,7 @@ const App: React.FC = () => {
     }
   }, [messages, isTyping]);
 
-  // 加载 Agents
+  // 加载 Agents（监听 refreshTrigger 以实现同步刷新）
   useEffect(() => {
     const loadAgents = async () => {
       try {
@@ -122,7 +123,7 @@ const App: React.FC = () => {
       }
     };
     loadAgents();
-  }, []);
+  }, [agentRefreshTrigger]);
 
   // 加载知识库
   useEffect(() => {
@@ -396,7 +397,12 @@ const App: React.FC = () => {
       />
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white md:bg-[#F7F7F8]">
         {view === 'admin' ? (
-          <AdminPanel currentUser={currentUser} onBack={() => setView('chat')} onModelsChange={refreshModels} />
+          <AdminPanel
+            currentUser={currentUser}
+            onBack={() => setView('chat')}
+            onModelsChange={refreshModels}
+            onAgentChange={() => setAgentRefreshTrigger(prev => prev + 1)}
+          />
         ) : (
           <>
             <TopBar
@@ -441,9 +447,9 @@ const App: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <div className="space-y-8 mb-24">
+                  <div className="space-y-8 mb-24" data-testid="messages-container">
                     {messages.map(m => (
-                      <div key={m.id} className={`flex gap-4 md:gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                      <div key={m.id} data-testid={`message-${m.id}`} data-message-role={m.role} className={`flex gap-4 md:gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
                         <div className={`w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-white font-bold shadow-sm ${m.role === 'user' ? 'bg-gray-800' : 'bg-blue-600'}`}>
                           {m.role === 'user' ? 'U' : 'B'}
                         </div>
@@ -476,7 +482,7 @@ const App: React.FC = () => {
                     )}
                     {/* 错误提示 */}
                     {errorMessage && (
-                      <div className="flex gap-4 md:gap-6 animate-in slide-in-from-bottom-2">
+                      <div className="flex gap-4 md:gap-6 animate-in slide-in-from-bottom-2" data-testid="error-message">
                         <div className="w-9 h-9 rounded-xl bg-red-500 flex items-center justify-center text-white font-bold">!</div>
                         <div className="bg-red-50 border border-red-200 px-6 py-4 rounded-2xl shadow-sm max-w-[85%]">
                           <p className="text-red-700 text-[15px]">{errorMessage}</p>

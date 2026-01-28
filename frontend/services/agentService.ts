@@ -123,7 +123,7 @@ export const agentService = {
       name: result.name,
       displayName: result.display_name,
       description: result.description,
-      type: result.type as AgentType,
+      type: result.agent_type as AgentType,  // 修复：使用 agent_type
       icon: result.icon || undefined,
       systemPrompt: result.system_prompt || undefined,
       isActive: result.is_active,
@@ -153,7 +153,7 @@ export const agentService = {
       name: agent.name,
       displayName: agent.display_name,
       description: agent.description,
-      type: agent.type as AgentType,
+      type: agent.agent_type as AgentType,  // 修复：使用 agent_type
       icon: agent.icon || undefined,
       systemPrompt: agent.system_prompt || undefined,
       isActive: agent.is_active,
@@ -187,7 +187,7 @@ export const agentService = {
       name: result.name,
       displayName: result.display_name,
       description: result.description,
-      type: result.type as AgentType,
+      type: result.agent_type as AgentType,  // 修复：使用 agent_type
       icon: result.icon || undefined,
       systemPrompt: result.system_prompt || undefined,
       isActive: result.is_active,
@@ -200,7 +200,7 @@ export const agentService = {
    * 更新 Agent
    */
   async updateAgent(agentId: string, data: UpdateAgentRequest): Promise<Agent> {
-    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/`, {
+    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(data)
@@ -217,7 +217,7 @@ export const agentService = {
       name: result.name,
       displayName: result.display_name,
       description: result.description,
-      type: result.type as AgentType,
+      type: result.agent_type as AgentType,  // 修复：使用 agent_type
       icon: result.icon || undefined,
       systemPrompt: result.system_prompt || undefined,
       isActive: result.is_active,
@@ -342,9 +342,10 @@ export const agentService = {
 
   /**
    * 获取活跃的 LLM 模型列表
+   * 注意：使用 /models/active 端点，不是 /agents/models/
    */
   async getActiveLLMModels(): Promise<any[]> {
-    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/models/`, {
+    const response = await fetch(`${CONFIG.API_BASE_URL}/models/active`, {
       headers: getAuthHeaders()
     });
 

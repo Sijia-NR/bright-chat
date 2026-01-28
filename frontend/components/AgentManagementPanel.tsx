@@ -80,17 +80,40 @@ const AgentManagementPanel: React.FC<AgentManagementPanelProps> = ({
     loadData();
   }, [refreshTrigger]);
 
+  // 刷新 Agent 列表（不重新加载模型和知识库）
+  const refreshAgents = async () => {
+    try {
+      const agentsData = await agentService.getAgents();
+      setAgents(agentsData);
+    } catch (e) {
+      console.error('Failed to refresh agents:', e);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [agentsData, kbData, modelsData] = await Promise.all([
+      const [agentsData, modelsData] = await Promise.all([
         agentService.getAgents(),
-        knowledgeService.getKnowledgeBases(),
         agentService.getActiveLLMModels(),
       ]);
       setAgents(agentsData);
-      setKnowledgeBases(kbData);
       setLLMModels(modelsData);
+
+      // 知识库列表需要先获取分组，再获取每个分组的知识库
+      try {
+        const groups = await knowledgeService.getKnowledgeGroups();
+        const allKbs: KnowledgeBaseAPI[] = [];
+        for (const group of groups) {
+          const kbs = await knowledgeService.getKnowledgeBases(group.id);
+          allKbs.push(...kbs);
+        }
+        setKnowledgeBases(allKbs);
+      } catch (kbError) {
+        console.warn('Failed to load knowledge bases:', kbError);
+        // 不阻塞整个加载流程
+        setKnowledgeBases([]);
+      }
     } catch (e) {
       console.error('Failed to load data:', e);
       showMessage('error', '加载数据失败');
@@ -208,16 +231,29 @@ const AgentManagementPanel: React.FC<AgentManagementPanelProps> = ({
 
   // 切换上线/下线状态
   const handleToggleActive = async (agent: AgentAPI) => {
-    setLoading(true);
+    const newStatus = !agent.is_active;
+
+    // 乐观更新：立即更新 UI
+    setAgents(prevAgents =>
+      prevAgents.map(a =>
+        a.id === agent.id
+          ? { ...a, is_active: newStatus }
+          : a
+      )
+    );
+
     try {
-      await agentService.updateAgent(agent.id, { is_active: !agent.is_active });
-      await loadData();
-      showMessage('success', agent.is_active ? 'Agent 已下线' : 'Agent 已上线');
-      onAgentChange?.();
+      // 调用 API 更新后端
+      await agentService.updateAgent(agent.id, { is_active: newStatus });
+      showMessage('success', newStatus ? 'Agent 已上线' : 'Agent 已下线');
+
+      // 刷新 Agent 列表以获取最新数据（不加载模型和知识库）
+      await refreshAgents();
     } catch (e) {
+      console.error('切换 Agent 状态失败:', e);
       showMessage('error', '操作失败，请重试');
-    } finally {
-      setLoading(false);
+      // 失败时恢复状态并重新加载
+      await refreshAgents();
     }
   };
 

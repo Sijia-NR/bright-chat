@@ -26,8 +26,19 @@ export const sessionService = {
         'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
       }
     });
-    if (!resp.ok) throw new Error('获取会话列表失败');
-    return resp.json();
+    if (!resp.ok) {
+      const error = await resp.json();
+      throw new Error(error.detail || '获取会话列表失败');
+    }
+    const sessions = await resp.json();
+    // 后端返回的是直接数组，需要转换为 ChatSession 格式
+    return sessions.map((s: any) => ({
+      id: s.id,
+      title: s.title,
+      lastUpdated: new Date(s.last_updated).getTime(),
+      userId: s.user_id,
+      agentId: s.agent_id
+    }));
   },
 
   async createSession(title: string, userId: string, agentId?: string): Promise<ChatSession> {
@@ -81,9 +92,12 @@ export const sessionService = {
         'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
       }
     });
-    if (!resp.ok) throw new Error('获取消息失败');
+    if (!resp.ok) {
+      const error = await resp.json();
+      throw new Error(error.detail || '获取消息失败');
+    }
     const messages = await resp.json();
-    // 转换后端时间戳格式为前端需要的格式
+    // 后端返回的是直接数组，转换时间戳格式
     return messages.map((msg: any) => ({
       id: msg.id,
       role: msg.role,

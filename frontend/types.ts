@@ -186,7 +186,7 @@ export interface AgentResponse {
   name: string;
   display_name: string;
   description: string;
-  type: string;
+  agent_type: string;  // 修复：后端返回的是 agent_type，不是 type
   icon: string | null;
   system_prompt: string | null;
   is_active: boolean;

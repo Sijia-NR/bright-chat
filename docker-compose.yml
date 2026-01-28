@@ -43,6 +43,28 @@ services:
       timeout: 3s
       retries: 5
 
+  # ChromaDB 向量数据库
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: AIWorkbench-chromadb
+    restart: unless-stopped
+    ports:
+      - "${CHROMADB_PORT:-8002}:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    networks:
+      - AIWorkbench-network
+    environment:
+      - CHROMADB_SERVER_AUTHN_CREDENTIALS_PROVIDER=noop
+      - CHROMADB_SERVER_AUTHN_CREDENTIALS_NOOP__IDENTITY=noop
+      - ANONYMIZED_TELEMETRY=False
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   # 后端 API 服务
   backend:
     build:
@@ -137,5 +159,6 @@ networks:
 volumes:
   mysql_data:
   redis_data:
+  chromadb_data:
   backend_logs:
   nginx_logs:

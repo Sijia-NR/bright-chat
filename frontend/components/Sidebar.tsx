@@ -86,6 +86,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* 新建对话按钮 */}
       <div className="p-4">
         <button
+          data-testid="new-chat-button"
           onClick={onNewChat}
           className="w-full flex items-center justify-center gap-2 py-3 bg-white border-2 border-gray-50 rounded-2xl shadow-sm hover:shadow-md transition-all font-bold text-gray-700 hover:bg-gray-50 group active:scale-[0.98]"
         >
@@ -133,7 +134,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 用户信息区域 */}
-      <div className="p-4 border-t border-gray-50 space-y-3 bg-white">
+      <div className="p-4 border-t border-gray-50 space-y-3 bg-white" data-testid="user-info-section">
         <div className="flex items-center gap-3 p-2">
           <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-black shadow-sm text-base ${
             currentUser.role === 'admin' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-white'
@@ -141,12 +142,13 @@ const Sidebar: React.FC<SidebarProps> = ({
             {currentUser.username.charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 overflow-hidden">
-            <div className="text-sm font-bold text-gray-900 truncate">{currentUser.username}</div>
+            <div className="text-sm font-bold text-gray-900 truncate" data-testid="current-username">{currentUser.username}</div>
             <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{currentUser.role}</div>
           </div>
 
           {currentUser.role === 'admin' && (
             <button
+              data-testid="admin-panel-button"
               onClick={onOpenAdmin}
               className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
               title="系统管理"
@@ -157,6 +159,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <button
+          data-testid="logout-button"
           onClick={onLogout}
           className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold text-gray-400 hover:text-red-500 transition-all border-2 border-transparent hover:border-red-50 hover:bg-red-50/50 rounded-2xl"
         >

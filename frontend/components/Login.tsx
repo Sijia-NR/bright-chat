@@ -16,6 +16,18 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 前端验证：检查空凭据
+    if (!username.trim()) {
+      setError('请输入用户名');
+      return;
+    }
+
+    if (!password.trim()) {
+      setError('请输入密码');
+      return;
+    }
+
     setError('');
     setLoading(true);
 
@@ -39,7 +51,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               <span className="text-2xl font-bold text-white">AI</span>
             </div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">AI工作台</h1>
-            <p className="text-gray-500 text-sm">请输入您的凭据以访问系统 (Mock: admin/admin123)</p>
+            <p className="text-gray-500 text-sm">请输入您的凭据以访问系统 (默认账号: admin / pwd123)</p>
           </div>
 
           <form onSubmit={handleSubmit} className="p-8 pt-0 space-y-5">
@@ -50,6 +62,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <UserIcon size={18} />
                 </div>
                 <input
+                  data-testid="username-input"
                   type="text"
                   required
                   value={username}
@@ -67,6 +80,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <Lock size={18} />
                 </div>
                 <input
+                  data-testid="password-input"
                   type="password"
                   required
                   value={password}
@@ -84,6 +98,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             )}
 
             <button
+              data-testid="login-button"
               type="submit"
               disabled={loading}
               className="w-full py-4 bg-gray-900 hover:bg-black text-white rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"

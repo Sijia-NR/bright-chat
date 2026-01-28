@@ -583,10 +583,10 @@ UPLOAD_DIR = Path("uploads/documents")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"上传目录已创建/确认: {UPLOAD_DIR}")
 
-# CORS middleware
+# CORS middleware - 允许所有来源访问（支持局域网）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8080"],
+    allow_origins=["*"],  # 允许所有来源
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1447,9 +1447,6 @@ async def process_document_background(
                 except:
                     pass
 
-    except Exception as e:
-        logger.error(f"[文档处理] 文档 {doc_id} 发生未处理的异常: {e}", exc_info=True)
-
 # ==================== Knowledge Base APIs ====================
 
 @app.get(API_PREFIX + "/knowledge/groups", response_model=List[KnowledgeGroupResponse])
@@ -1709,7 +1706,7 @@ async def get_document_chunks(
 @app.get(API_PREFIX + "/knowledge/search")
 async def search_knowledge(
     query: str,
-    knowledge_base_ids: str,
+    knowledge_base_ids: Optional[str] = None,  # 改为可选参数
     top_k: int = 5,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1718,19 +1715,36 @@ async def search_knowledge(
     if not query:
         raise HTTPException(status_code=400, detail="查询内容不能为空")
 
-    # 解析知识库 ID 列表
-    try:
-        kb_ids = knowledge_base_ids.split(',')
-    except:
-        raise HTTPException(status_code=400, detail="知识库 ID 格式错误")
+    # 如果没有指定知识库，使用用户的所有知识库
+    if knowledge_base_ids:
+        # 解析知识库 ID 列表
+        try:
+            kb_ids = knowledge_base_ids.split(',')
+        except:
+            raise HTTPException(status_code=400, detail="知识库 ID 格式错误")
 
-    # 验证所有知识库都属于当前用户
-    bases = db.query(KnowledgeBase).filter(
-        KnowledgeBase.id.in_(kb_ids),
-        KnowledgeBase.user_id == current_user.id
-    ).all()
-    if len(bases) != len(kb_ids):
-        raise HTTPException(status_code=403, detail="无权访问某些知识库")
+        # 验证所有知识库都属于当前用户
+        bases = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(kb_ids),
+            KnowledgeBase.user_id == current_user.id
+        ).all()
+        if len(bases) != len(kb_ids):
+            raise HTTPException(status_code=403, detail="无权访问某些知识库")
+    else:
+        # 获取用户的所有知识库
+        bases = db.query(KnowledgeBase).filter(
+            KnowledgeBase.user_id == current_user.id
+        ).all()
+        kb_ids = [kb.id for kb in bases]
+
+    # 如果用户没有任何知识库，返回空结果
+    if not kb_ids:
+        return {
+            "results": [],
+            "query": query,
+            "total": 0,
+            "message": "暂无可搜索的知识库，请先创建知识库并上传文档"
+        }
 
     try:
         rag_config = get_rag_config()
@@ -2075,7 +2089,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"   ❌ ChromaDB初始化失败: {e}")
 
-    # 3. 检查BGE模型
+    # 3. 检查BGE模型（可选，失败不影响启动）
     logger.info("4. 检查BGE模型...")
     try:
         # 预加载模型（首次加载会较慢）

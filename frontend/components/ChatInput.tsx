@@ -53,6 +53,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
         {/* Added bg-white and text-gray-800 explicitly here to prevent dark mode issues */}
         <textarea
           ref={textareaRef}
+          data-testid="chat-input"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -77,11 +78,12 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
 
           {/* Send Button */}
           <button
+            data-testid="send-button"
             onClick={handleSend}
             disabled={!text.trim() || disabled}
             className={`flex items-center justify-center w-9 h-9 rounded-full transition-all duration-300 ${
-              text.trim() 
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700 scale-100' 
+              text.trim()
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700 scale-100'
                 : 'bg-gray-50 text-gray-300 scale-95 cursor-not-allowed'
             }`}
           >
