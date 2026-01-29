@@ -1734,12 +1734,23 @@ async def get_document_chunks(
             })
 
         # 应用分页
-        total_count = len(chunks)
+        # ✅ 使用数据库中的 chunk_count 作为总数，而不是 ChromaDB 实际查询到的数量
+        # 这样即使 ChromaDB 数据不完整，分页也能正常工作
+        total_count = doc.chunk_count if doc.chunk_count else len(chunks)
+        actual_count = len(chunks)  # ChromaDB 中的实际数量
+
+        # 如果 ChromaDB 中的数量少于记录数，记录警告
+        if actual_count < total_count:
+            logger.warning(
+                f"文档 {doc.filename} (ID: {doc_id}) 的切片数据不完整: "
+                f"数据库记录 {total_count} 个，ChromaDB 实际有 {actual_count} 个"
+            )
+
         start_idx = offset
-        end_idx = offset + limit if limit else len(chunks)
+        end_idx = offset + limit if limit else actual_count
 
         # 确保索引在有效范围内
-        if start_idx >= total_count:
+        if start_idx >= actual_count:
             paginated_chunks = []
         else:
             paginated_chunks = chunks[start_idx:end_idx]

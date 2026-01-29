@@ -42,8 +42,9 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
 
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(10); // 每页显示 10 个切片
+  const [pageSize, setPageSize] = useState(10); // 每页显示 10 个切片
   const [totalCount, setTotalCount] = useState(0);
+  const [jumpToPage, setJumpToPage] = useState(''); // 跳转到指定页
 
   // 加载知识库详情
   const loadKnowledgeBase = async () => {
@@ -86,17 +87,24 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
       console.log('📦 提取的 chunks 数组:', chunksArray);
       console.log('📦 Chunks 长度:', chunksArray.length);
       console.log('📦 Total count:', data.total_count);
+      console.log('📦 Returned count:', data.returned_count);
+      console.log('📦 Offset:', data.offset);
+      console.log('📦 Limit:', data.limit);
 
-      // 更新总数
-      if (data.total_count !== undefined) {
-        setTotalCount(data.total_count);
-      }
+      // 更新总数 - 重要：使用 data.total_count 而不是 chunksArray.length
+      const totalCountValue = data.total_count ?? chunksArray.length;
+      console.log('📊 最终设置的 totalCount:', totalCountValue);
+      console.log('📊 当前 pageSize:', pageSize);
+      console.log('📊 是否应该显示分页:', totalCountValue > pageSize);
+
+      setTotalCount(totalCountValue);
 
       // 调试日志：查看实际数据
       if (process.env.NODE_ENV === 'development') {
         console.log('📦 Chunks loaded:', chunksArray.length);
         if (chunksArray.length > 0) {
           console.log('📦 First chunk:', chunksArray[0]);
+          console.log('📦 Last chunk:', chunksArray[chunksArray.length - 1]);
         }
       }
 
@@ -115,6 +123,27 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
   const handlePageChange = (newPage: number) => {
     if (selectedDocId && newPage >= 1 && newPage <= Math.ceil(totalCount / pageSize)) {
       loadChunks(selectedDocId, newPage);
+    }
+  };
+
+  // 处理每页条数变化
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize);
+    setCurrentPage(1); // 重置到第一页
+    if (selectedDocId) {
+      loadChunks(selectedDocId, 1);
+    }
+  };
+
+  // 处理跳转到指定页
+  const handleJumpToPage = () => {
+    const pageNum = parseInt(jumpToPage);
+    const totalPages = Math.ceil(totalCount / pageSize);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+      handlePageChange(pageNum);
+      setJumpToPage('');
+    } else {
+      showToast(`请输入有效的页码 (1-${totalPages})`, 'error');
     }
   };
 
@@ -368,35 +397,86 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
                     </div>
 
                     {/* 分页组件 */}
-                    {totalCount > pageSize && (
-                      <div className="mt-6 flex items-center justify-between bg-white rounded-lg border border-gray-200 px-4 py-3">
-                        <button
-                          onClick={() => handlePageChange(currentPage - 1)}
-                          disabled={currentPage === 1}
-                          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          <ChevronLeft size={16} />
-                          上一页
-                        </button>
+                    {totalCount > 0 && (
+                      <div className="mt-6 bg-white rounded-lg border border-gray-200 px-4 py-3">
+                        <div className="flex flex-col gap-4">
+                          {/* 第一行：翻页控制 */}
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => handlePageChange(currentPage - 1)}
+                              disabled={currentPage === 1}
+                              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <ChevronLeft size={16} />
+                              上一页
+                            </button>
 
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-600">
-                            第 <span className="font-bold text-gray-900">{currentPage}</span> /
-                            <span className="font-bold text-gray-900">{Math.ceil(totalCount / pageSize)}</span> 页
-                          </span>
-                          <span className="text-sm text-gray-500">
-                            ({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)} / {totalCount})
-                          </span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm text-gray-600">
+                                第 <span className="font-bold text-gray-900">{currentPage}</span> /
+                                <span className="font-bold text-gray-900">{Math.ceil(totalCount / pageSize)}</span> 页
+                              </span>
+                              <span className="text-sm text-gray-500">
+                                ({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)} / {totalCount})
+                              </span>
+                            </div>
+
+                            <button
+                              onClick={() => handlePageChange(currentPage + 1)}
+                              disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              下一页
+                              <ChevronRight size={16} />
+                            </button>
+                          </div>
+
+                          {/* 第二行：高级控制（每页条数 + 跳转） */}
+                          <div className="flex items-center justify-between pt-3 border-t border-gray-200">
+                            {/* 每页条数选择 */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-600">每页</span>
+                              <select
+                                value={pageSize}
+                                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                                className="px-2 py-1 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value={5}>5 条</option>
+                                <option value={10}>10 条</option>
+                                <option value={20}>20 条</option>
+                                <option value={50}>50 条</option>
+                                <option value={100}>100 条</option>
+                              </select>
+                              <span className="text-sm text-gray-600">条</span>
+                            </div>
+
+                            {/* 跳转到指定页 */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-gray-600">跳转到</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={Math.ceil(totalCount / pageSize)}
+                                value={jumpToPage}
+                                onChange={(e) => setJumpToPage(e.target.value)}
+                                onKeyPress={(e) => {
+                                  if (e.key === 'Enter') {
+                                    handleJumpToPage();
+                                  }
+                                }}
+                                placeholder={`1-${Math.ceil(totalCount / pageSize)}`}
+                                className="w-24 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <button
+                                onClick={handleJumpToPage}
+                                className="px-3 py-1 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                              >
+                                Go
+                              </button>
+                              <span className="text-sm text-gray-600">页</span>
+                            </div>
+                          </div>
                         </div>
-
-                        <button
-                          onClick={() => handlePageChange(currentPage + 1)}
-                          disabled={currentPage >= Math.ceil(totalCount / pageSize)}
-                          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          下一页
-                          <ChevronRight size={16} />
-                        </button>
                       </div>
                     )}
                   </>

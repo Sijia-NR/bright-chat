@@ -319,6 +319,15 @@ class DocumentProcessor:
         try:
             logger.info(f"开始处理文档: {filename}")
 
+            # ✅ 修复：如果提供了 document_id，先清理旧的切片数据
+            if document_id:
+                try:
+                    logger.info(f"清理文档 {document_id} 的旧切片数据...")
+                    await self.delete_document(document_id)
+                    logger.info(f"✅ 已清理旧切片数据")
+                except Exception as e:
+                    logger.warning(f"清理旧切片数据失败（继续处理）: {e}")
+
             # 1. 验证并加载文档
             file_type, documents = await self._validate_and_load_document(filename, file_path)
 
@@ -367,9 +376,15 @@ class DocumentProcessor:
         chunk_metadatas = []
 
         for idx, chunk in enumerate(chunks):
+            # ✅ 修复：过滤掉空内容和仅包含空白字符的切片
+            content = chunk.page_content.strip()
+            if not content:
+                logger.warning(f"跳过空切片: idx={idx}, document_id={document_id}")
+                continue
+
             chunk_id = f"{document_id}_chunk_{idx}"
             chunk_ids.append(chunk_id)
-            chunk_documents.append(chunk.page_content)
+            chunk_documents.append(content)
             chunk_metadatas.append({
                 "document_id": document_id,
                 "knowledge_base_id": knowledge_base_id,
@@ -380,6 +395,10 @@ class DocumentProcessor:
                 "source": filename
             })
 
+        # 记录过滤后的数量
+        if len(chunk_ids) != len(chunks):
+            logger.warning(f"过滤空切片: 原始 {len(chunks)} -> 过滤后 {len(chunk_ids)}")
+
         return chunk_ids, chunk_documents, chunk_metadatas
 
     async def _store_to_chromadb(
@@ -389,32 +408,83 @@ class DocumentProcessor:
         chunk_metadatas: list,
         chunk_count: int
     ):
-        """存储数据到 ChromaDB"""
-        if self.config.use_chromadb_embedding:
-            logger.info(f"准备存储 {chunk_count} 个块到 ChromaDB (使用自带向量模型)...")
-            collection = self.config.get_or_create_collection(
-                KNOWLEDGE_COLLECTION,
-                use_embedding=True
-            )
-            logger.info("Collection 已获取，开始添加数据...")
-            collection.add(
-                ids=chunk_ids,
-                documents=chunk_documents,
-                metadatas=chunk_metadatas
-            )
-            logger.info(f"✅ 使用 ChromaDB 自带向量模型成功处理 {chunk_count} 个块")
-        else:
-            logger.info("使用本地 embedding 模型生成向量")
-            texts = chunk_documents
-            embeddings = await self.embed_documents(texts)
+        """存储数据到 ChromaDB（支持分批插入）"""
 
-            collection = self.config.get_or_create_collection(KNOWLEDGE_COLLECTION)
-            collection.add(
-                ids=chunk_ids,
-                embeddings=embeddings,
-                documents=chunk_documents,
-                metadatas=chunk_metadatas
-            )
+        # ✅ 修复：分批插入，避免一次性插入过多数据导致失败
+        batch_size = 50  # 每批最多50个切片
+        total_inserted = 0
+
+        logger.info(f"准备存储 {chunk_count} 个块到 ChromaDB (批次大小: {batch_size})...")
+
+        try:
+            if self.config.use_chromadb_embedding:
+                logger.info("使用 ChromaDB 自带向量模型")
+                collection = self.config.get_or_create_collection(
+                    KNOWLEDGE_COLLECTION,
+                    use_embedding=True
+                )
+
+                # 分批插入
+                for i in range(0, len(chunk_ids), batch_size):
+                    batch_end = min(i + batch_size, len(chunk_ids))
+                    batch_ids = chunk_ids[i:batch_end]
+                    batch_documents = chunk_documents[i:batch_end]
+                    batch_metadatas = chunk_metadatas[i:batch_end]
+
+                    logger.info(f"插入批次 {i//batch_size + 1}: 切片 {i+1}-{batch_end} (共 {batch_end-i} 个)")
+                    collection.add(
+                        ids=batch_ids,
+                        documents=batch_documents,
+                        metadatas=batch_metadatas
+                    )
+                    total_inserted += len(batch_ids)
+                    logger.info(f"✅ 批次 {i//batch_size + 1} 插入成功")
+
+                logger.info(f"✅ 总共成功插入 {total_inserted}/{chunk_count} 个块")
+
+                # ⚠️ 验证插入数量 - 不匹配则抛出异常
+                if total_inserted != chunk_count:
+                    error_msg = f"插入数量不匹配! 预期 {chunk_count} 个，实际插入 {total_inserted} 个"
+                    logger.error(f"❌ {error_msg}")
+                    raise ValueError(error_msg)
+
+            else:
+                logger.info("使用本地 embedding 模型生成向量")
+                collection = self.config.get_or_create_collection(KNOWLEDGE_COLLECTION)
+
+                # 分批生成 embedding 并插入
+                for i in range(0, len(chunk_ids), batch_size):
+                    batch_end = min(i + batch_size, len(chunk_ids))
+                    batch_ids = chunk_ids[i:batch_end]
+                    batch_documents = chunk_documents[i:batch_end]
+                    batch_metadatas = chunk_metadatas[i:batch_end]
+
+                    logger.info(f"处理批次 {i//batch_size + 1}: 切片 {i+1}-{batch_end}")
+
+                    # 生成 embedding
+                    embeddings = await self.embed_documents(batch_documents)
+
+                    # 插入
+                    collection.add(
+                        ids=batch_ids,
+                        embeddings=embeddings,
+                        documents=batch_documents,
+                        metadatas=batch_metadatas
+                    )
+                    total_inserted += len(batch_ids)
+                    logger.info(f"✅ 批次 {i//batch_size + 1} 插入成功")
+
+                logger.info(f"✅ 总共成功插入 {total_inserted}/{chunk_count} 个块")
+
+                # ⚠️ 验证插入数量 - 不匹配则抛出异常
+                if total_inserted != chunk_count:
+                    error_msg = f"插入数量不匹配! 预期 {chunk_count} 个，实际插入 {total_inserted} 个"
+                    logger.error(f"❌ {error_msg}")
+                    raise ValueError(error_msg)
+
+        except Exception as e:
+            logger.error(f"❌ ChromaDB 插入失败 (已插入 {total_inserted}/{chunk_count}): {e}")
+            raise
 
     def _generate_result(
         self,

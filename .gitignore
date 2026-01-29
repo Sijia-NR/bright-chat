@@ -1,0 +1,220 @@
+# ============================================
+# Bright-Chat .gitignore
+# ============================================
+# 说明: Git版本控制忽略规则
+# 维护: 添加新的忽略规则时请添加注释说明
+# ============================================
+
+# ============================================
+# 环境变量和敏感信息
+# ============================================
+.env
+.env.local
+.env.*.local
+.env.production
+.env.test
+*.key
+*.pem
+secrets/
+credentials.json
+
+# ============================================
+# 日志文件
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 后端日志
+backend-python/logs/
+agent-service/logs/
+
+# ============================================
+# 临时文件和目录
+# ============================================
+tmp/
+tmpPic/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 测试截图
+test_screenshots/
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+*.mo
+*.pot
+
+# ============================================
+# Node.js / 前端
+# ============================================
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+
+# 构建输出
+dist/
+dist-ssr/
+build/
+.next/
+out/
+
+# Vite缓存
+.vite/
+
+# ============================================
+# IDE和编辑器
+# ============================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# 数据库
+# ============================================
+*.sqlite
+*.sqlite3
+*.db
+
+# 数据备份
+.backups/
+*.backup
+*.bak
+
+# ============================================
+# Docker
+# ============================================
+docker-compose.override.yml
+.dockerignore.bak
+
+# ============================================
+# 模型和数据文件
+# ============================================
+# 大模型文件 (通常很大,不纳入版本控制)
+models/*.bin
+models/*.gguf
+models/*.safetensors
+models/*.pth
+
+# 向量数据库数据
+chromadb_data/
+data/chroma/
+
+# ============================================
+# 测试覆盖率
+# ============================================
+coverage/
+*.lcov
+.nyc_output/
+
+# ============================================
+# 文档和笔记 (个人)
+# ============================================
+*_FIX.md
+*_NOTE.md
+*_TODO.md
+personal-notes/
+scratch/
+
+# ============================================
+# 操作系统生成的文件
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# 其他临时文件
+# ============================================
+*.pid
+*.seed
+*.pid.lock
+.lock
+package-lock.json
+yarn.lock
+
+# ============================================
+# 项目特定
+# ============================================
+# 保留示例配置
+!.env.example
+!.env.production.example
+!.env.test.example
+
+# 保留文档模板
+!Project-Artifacts/
+
+# 数据持久化卷
+data/
+mysql_data/
+redis_data/
+chromadb_data/
+
+# ============================================
+# AI Agent临时文件
+# ============================================
+agent-service/logs/temp/
+agent_executions_cache/
+
+# ============================================
+# 部署相关
+# ============================================
+.deploy/
+*.pem
+*.key
+*.crt
+
+# ============================================
+# 监控和分析
+# ============================================
+*.prof
+*.pprof
