@@ -301,6 +301,44 @@ class RAGConfig:
                     logger.error(f"HTTP API 删除异常: {e}")
                     raise
 
+            def query(self, query_embeddings, n_results=10, where=None, include=None):
+                """
+                向量相似度查询
+
+                Args:
+                    query_embeddings: 查询向量列表
+                    n_results: 返回结果数量
+                    where: 过滤条件
+                    include: 包含的数据类型
+                """
+                try:
+                    # ChromaDB v2 API query endpoint
+                    url = f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/query"
+
+                    payload = {
+                        "query_embeddings": query_embeddings,
+                        "n_results": n_results
+                    }
+
+                    if where:
+                        payload["where"] = where
+                    if include:
+                        payload["include"] = include
+
+                    resp = requests.post(url, json=payload)
+
+                    if resp.status_code == 200:
+                        return resp.json()
+                    else:
+                        logger.error(f"HTTP API 查询失败: {resp.status_code} - {resp.text}")
+                        # 返回空结果格式
+                        return {"ids": [[]], "distances": [[]], "documents": [[]], "metadatas": [[]]}
+
+                except Exception as e:
+                    logger.error(f"HTTP API 查询异常: {e}")
+                    # 返回空结果格式
+                    return {"ids": [[]], "distances": [[]], "documents": [[]], "metadatas": [[]]}
+
             def count(self):
                 """获取文档数量"""
                 try:

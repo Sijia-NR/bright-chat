@@ -1749,6 +1749,10 @@ async def search_knowledge(
     if not query:
         raise HTTPException(status_code=400, detail="查询内容不能为空")
 
+    # 导入 RAG 配置
+    from app.rag.config import get_rag_config
+    rag_config = get_rag_config()
+
     # 如果没有指定知识库，使用用户的所有知识库
     if knowledge_base_ids:
         # 解析知识库 ID 列表

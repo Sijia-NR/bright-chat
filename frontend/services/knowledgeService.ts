@@ -260,5 +260,35 @@ export const knowledgeService = {
     });
 
     if (!resp.ok) throw new Error('删除知识库失败');
+  },
+
+  // ==================== 知识库检索相关方法 ====================
+
+  async search(query: string, knowledgeBaseIds?: string[], topK: number = 5): Promise<{
+    query: string;
+    results: Array<{
+      content: string;
+      metadata: {
+        document_id: string;
+        knowledge_base_id: string;
+        user_id: string;
+        chunk_index: number;
+        filename: string;
+        file_type: string;
+      };
+      score: number;
+    }>;
+  }> {
+    const params = new URLSearchParams({ query, top_k: topK.toString() });
+    if (knowledgeBaseIds && knowledgeBaseIds.length > 0) {
+      params.append('knowledge_base_ids', knowledgeBaseIds.join(','));
+    }
+
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/search?${params}`, {
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
+    });
+
+    if (!resp.ok) throw new Error('知识库搜索失败');
+    return resp.json();
   }
 };

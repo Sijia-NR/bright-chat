@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Brain, Search, Code, Image as ImageIcon, Mic, Presentation, Video, FileText } from 'lucide-react';
+import { Send, Brain, Search, Code, Image as ImageIcon, Mic, Presentation, Video, FileText, Database } from 'lucide-react';
+import KnowledgeSearchModal from './KnowledgeSearchModal';
 
 interface ChatInputProps {
   onSend: (text: string) => void;
@@ -10,6 +11,7 @@ interface ChatInputProps {
 const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showKnowledgeSearch, setShowKnowledgeSearch] = useState(false);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -44,6 +46,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
     { icon: <Presentation size={18} />, label: '生成PPT' },
     { icon: <Video size={18} />, label: '创作视频' },
     { icon: <FileText size={18} />, label: '阅读文档' },
+    { icon: <Database size={18} />, label: '知识库搜索', action: () => setShowKnowledgeSearch(true) },
   ];
 
   return (
@@ -97,6 +100,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
         {shortcuts.map((item, idx) => (
           <button
             key={idx}
+            onClick={(item as any).action ? (item as any).action : undefined}
             className="flex flex-col items-center gap-2.5 group outline-none"
           >
             <div className="w-11 h-11 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center text-gray-500 group-hover:text-blue-600 group-hover:border-blue-200 group-hover:bg-blue-50 group-hover:shadow-md transition-all duration-300">
@@ -106,6 +110,11 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled }) => {
           </button>
         ))}
       </div>
+
+      {/* Knowledge Search Modal */}
+      {showKnowledgeSearch && (
+        <KnowledgeSearchModal onClose={() => setShowKnowledgeSearch(false)} />
+      )}
     </div>
   );
 };
