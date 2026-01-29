@@ -207,16 +207,36 @@ class RAGConfig:
 
         class _HTTPCollectionWrapper:
             def __init__(self, host: str, port: str, name: str):
-                self.base_url = f"http://{host}:{port}/api/v2/tenants/default_tenant/databases/default_database/collections/{name}"
                 self.name = name
+                self.host = host
+                self.port = port
+                # 获取 collection ID（ChromaDB v2 API 需要 ID 而不是 name）
+                self.collection_id = self._get_collection_id(host, port, name)
+
+            def _get_collection_id(self, host: str, port: str, name: str) -> str:
+                """获取 collection ID"""
+                try:
+                    resp = requests.get(f"http://{host}:{port}/api/v2/tenants/default_tenant/databases/default_database/collections")
+                    if resp.status_code == 200:
+                        collections = resp.json()
+                        for coll in collections:
+                            if coll.get('name') == name:
+                                coll_id = coll.get('id')
+                                logger.info(f"✅ 找到 Collection ID: {coll_id}")
+                                return coll_id
+                    logger.warning(f"未找到 collection {name}，使用 name 作为标识")
+                    return name
+                except Exception as e:
+                    logger.error(f"获取 collection ID 失败: {e}")
+                    return name
 
             def get(self, where=None, limit=None, offset=None, include=None):
                 """使用 HTTP API 查询"""
                 import json
                 try:
-                    # ChromaDB v2 API 使用 POST 请求
+                    # ChromaDB v2 API 使用 POST 请求 + collection ID
                     resp = requests.post(
-                        f"http://localhost:8002/api/v2/tenants/default_tenant/databases/default_database/collections/{self.name}/get",
+                        f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
                         json={
                             "where": where,
                             "limit": limit or 10,
@@ -233,18 +253,58 @@ class RAGConfig:
                     logger.error(f"HTTP API 查询异常: {e}")
                     return {"documents": [], "metadatas": [], "ids": []}
 
-            def add(self, documents, metadatas, ids):
-                """添加文档（暂不实现）"""
-                raise NotImplementedError("HTTP wrapper 不支持 add,请修复 ChromaDB 客户端版本")
+            def add(self, ids=None, documents=None, metadatas=None, embeddings=None):
+                """使用 HTTP API 添加文档（支持 embeddings）"""
+                try:
+                    # ChromaDB v2 API add endpoint + collection ID
+                    url = f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/add"
+
+                    # 准备请求数据
+                    payload = {}
+                    if ids is not None:
+                        payload["ids"] = ids
+                    if documents is not None:
+                        payload["documents"] = documents
+                    if metadatas is not None:
+                        payload["metadatas"] = metadatas
+                    if embeddings is not None:
+                        payload["embeddings"] = embeddings
+
+                    # 发送 POST 请求
+                    resp = requests.post(url, json=payload)
+
+                    if resp.status_code in [200, 201]:
+                        logger.info(f"✅ HTTP API 成功添加 {len(ids) if ids else 0} 个向量")
+                        return True
+                    else:
+                        logger.error(f"HTTP API 添加失败: {resp.status_code} - {resp.text}")
+                        return False
+
+                except Exception as e:
+                    logger.error(f"HTTP API 添加异常: {e}")
+                    raise
 
             def delete(self, where=None):
-                """删除文档（暂不实现）"""
-                raise NotImplementedError("HTTP wrapper 不支持 delete,请修复 ChromaDB 客户端版本")
+                """使用 HTTP API 删除文档"""
+                try:
+                    url = f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/delete"
+                    resp = requests.post(url, json={"where": where})
+
+                    if resp.status_code in [200, 201]:
+                        logger.info(f"✅ HTTP API 成功删除文档")
+                        return True
+                    else:
+                        logger.error(f"HTTP API 删除失败: {resp.status_code} - {resp.text}")
+                        return False
+
+                except Exception as e:
+                    logger.error(f"HTTP API 删除异常: {e}")
+                    raise
 
             def count(self):
                 """获取文档数量"""
                 try:
-                    resp = requests.get(f"http://localhost:8002/api/v2/tenants/default_tenant/databases/default_database/collections/{self.name}")
+                    resp = requests.get(f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}")
                     if resp.status_code == 200:
                         data = resp.json()
                         return data.get("count", 0)
