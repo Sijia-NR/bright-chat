@@ -1692,10 +1692,12 @@ async def get_document(
 async def get_document_chunks(
     kb_id: str,
     doc_id: str,
+    offset: int = 0,
+    limit: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """获取文档切片详情"""
+    """获取文档切片详情（支持分页）"""
     # 验证知识库存在且属于当前用户
     base = db.query(KnowledgeBase).filter(
         KnowledgeBase.id == kb_id,
@@ -1731,7 +1733,27 @@ async def get_document_chunks(
                 "metadata": metadata
             })
 
-        return chunks
+        # 应用分页
+        total_count = len(chunks)
+        start_idx = offset
+        end_idx = offset + limit if limit else len(chunks)
+
+        # 确保索引在有效范围内
+        if start_idx >= total_count:
+            paginated_chunks = []
+        else:
+            paginated_chunks = chunks[start_idx:end_idx]
+
+        # ✅ 返回对象而不是数组，与 app/rag/router.py 保持一致
+        return {
+            "document_id": doc_id,
+            "filename": doc.filename,
+            "chunks": paginated_chunks,
+            "total_count": total_count,
+            "returned_count": len(paginated_chunks),
+            "offset": offset,
+            "limit": limit
+        }
     except Exception as e:
         logger.error(f"获取文档切片失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取切片失败: {str(e)}")

@@ -21,13 +21,13 @@ interface SidebarProps {
   onLogout: () => void;
   onOpenAdmin: () => void;
   onOpenFavorites: () => void;
+  onOpenManage: () => void;  // ✅ 添加知识库管理按钮回调
   agents: AgentAPI[];
   selectedAgent: Agent | null;
   onAgentClick: (agent: AgentAPI) => void;
-  knowledgeBases: KnowledgeBase[];  // ✅ 只需要知识库列表
+  knowledgeBases: KnowledgeBase[];
   onKnowledgeRefresh: () => void;
-  onCreateKnowledgeBase: () => Promise<void>;  // ✅ 创建知识库
-  onSelectKnowledgeBase: (baseId: string) => void;  // ✅ 选择知识库
+  onSelectKnowledgeBase: (baseId: string) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -40,12 +40,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   onOpenAdmin,
   onOpenFavorites,
+  onOpenManage,
   agents,
   selectedAgent,
   onAgentClick,
   knowledgeBases,
   onKnowledgeRefresh,
-  onCreateKnowledgeBase,
   onSelectKnowledgeBase
 }) => {
   const [sections, setSections] = useState<SidebarSectionState>({
@@ -100,12 +100,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         bases={knowledgeBases}
         isExpanded={sections.knowledge}
         onToggle={() => toggleSection('knowledge')}
-        onOpenManage={() => {/* TODO: 打开知识库管理页面 */}}
-        onCreateBase={async () => {
-          const name = prompt('请输入知识库名称:');
-          if (!name) return;
-          await onCreateKnowledgeBase();
-        }}
+        onOpenManage={onOpenManage}
         onSelectBase={onSelectKnowledgeBase}
       />
 

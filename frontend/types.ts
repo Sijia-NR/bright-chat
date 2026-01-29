@@ -155,22 +155,9 @@ export interface LLMModelListResponse {
   total: number;
 }
 
-// 知识库分组
-export interface KnowledgeGroup {
-  id: string;
-  userId: string;                // 所属用户
-  name: string;
-  description?: string;
-  order: number;
-  createdAt: number;
-  updatedAt: number;
-  knowledgeBaseCount?: number;   // 该分组下的知识库数量
-}
-
 // 知识库项
 export interface KnowledgeBase {
   id: string;
-  groupId: string | null;        // 所属分组（允许为空）
   name: string;
   description?: string;
   type?: 'file' | 'url' | 'text';
@@ -181,6 +168,7 @@ export interface KnowledgeBase {
   embeddingModel?: string;
   chunkSize?: number;
   chunkOverlap?: number;
+  documentCount?: number;        // 文档数量
 }
 
 // 后端响应类型 - Agent
@@ -197,20 +185,9 @@ export interface AgentResponse {
   order: number;
 }
 
-// 后端响应类型 - 知识库分组
-export interface KnowledgeGroupResponse {
-  id: string;
-  name: string;
-  description: string | null;
-  order: number;
-  created_at: string;
-  updated_at: string;
-}
-
 // 后端响应类型 - 知识库项
 export interface KnowledgeBaseResponse {
   id: string;
-  group_id: string | null;
   user_id: string;
   name: string;
   description: string | null;
@@ -310,7 +287,6 @@ export interface KnowledgeBaseAPI {
   description: string | null;
   is_active: boolean;
   document_count: number;
-  group_id: string | null;
   created_at: string;
   updated_at: string;
 }

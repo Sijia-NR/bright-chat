@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Plus, Edit2, Trash2 } from 'lucide-react';
 import { KnowledgeGroup, KnowledgeBase } from '../../types';
+import { useModal } from '../../contexts/ModalContext';
 
 interface KnowledgeModalProps {
   isOpen: boolean;
@@ -21,12 +22,10 @@ const KnowledgeModal: React.FC<KnowledgeModalProps> = ({
   onUpdateGroup,
   onDeleteGroup
 }) => {
+  const { showConfirm } = useModal();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newGroupName, setNewGroupName] = useState('');
   const [showNewGroupInput, setShowNewGroupInput] = useState(false);
-
-  // 调试日志
-  console.log('🔍 KnowledgeModal 渲染状态:', { isOpen, groupsCount: groups.length, basesCount: bases.length });
 
   if (!isOpen) return null;
 
@@ -96,8 +95,15 @@ const KnowledgeModal: React.FC<KnowledgeModalProps> = ({
                         <Edit2 size={14} />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`确定删除分组"${group.name}"吗？`)) {
+                        onClick={async () => {
+                          const confirmed = await showConfirm({
+                            title: '删除分组',
+                            message: `确定删除分组"${group.name}"吗？`,
+                            type: 'danger',
+                            confirmText: '删除',
+                            cancelText: '取消'
+                          });
+                          if (confirmed) {
                             onDeleteGroup(group.id);
                           }
                         }}

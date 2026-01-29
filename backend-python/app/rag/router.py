@@ -355,7 +355,20 @@ async def upload_document(
                 detail=f"不支持的文件类型。支持的类型: {list(processor.SUPPORTED_FILE_TYPES.keys())}"
             )
 
-        # 验证文件大小
+        # ✅ 先检查 Content-Length 头，防止大文件攻击
+        content_length = file.file._headers.get('content-length')
+        if content_length:
+            try:
+                file_size = int(content_length)
+                if file_size > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件大小超过限制 ({MAX_FILE_SIZE / 1024 / 1024:.0f}MB)"
+                    )
+            except ValueError:
+                pass  # 如果 Content-Length 无效，继续读取文件内容检查
+
+        # 验证文件大小（双重检查）
         content = await file.read()
         if len(content) > MAX_FILE_SIZE:
             raise HTTPException(
@@ -529,9 +542,13 @@ async def delete_document(
         if not kb:
             raise HTTPException(status_code=403, detail="无权限删除此文档")
 
-        # 删除向量数据
+        # ✅ 删除向量数据（带错误处理）
         processor = get_document_processor()
-        await processor.delete_document(doc_id)
+        try:
+            await processor.delete_document(doc_id)
+        except Exception as e:
+            logger.error(f"删除向量数据失败: {e}")
+            # 向量删除失败不影响数据库记录的删除，但记录错误日志
 
         # 清理临时文件
         cleanup_temp_files(doc_id, document.filename)

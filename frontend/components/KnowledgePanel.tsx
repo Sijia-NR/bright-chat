@@ -6,16 +6,19 @@
  * Provides knowledge base and document management features
  */
 import { useState, useEffect, useRef } from 'react';
-import { FolderOpen, FileText, Trash2, Plus, Upload } from 'lucide-react';
+import { FolderOpen, FileText, Trash2, Plus, Upload, ArrowLeft, Loader2 } from 'lucide-react';
 import { knowledgeService } from '../services/knowledgeService';
+import { useModal } from '../contexts/ModalContext';
 import { KnowledgeGroupAPI, KnowledgeBaseAPI, DocumentAPI } from '../types';
 
 interface KnowledgePanelProps {
-  onClose?: () => void;
-  userId?: string;  // 添加 userId 参数
+  onClose: () => void;
+  onRefresh: () => void;
 }
 
-export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
+export function KnowledgePanel({ onClose, onRefresh }: KnowledgePanelProps) {
+  const { showToast, showConfirm, showInput } = useModal();
+  const [userId, setUserId] = useState<string | null>(null);
   const [groups, setGroups] = useState<KnowledgeGroupAPI[]>([]);
   const [bases, setBases] = useState<KnowledgeBaseAPI[]>([]);
   const [selectedBase, setSelectedBase] = useState<KnowledgeBaseAPI | null>(null);
@@ -27,6 +30,12 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
 
   // 加载知识库分组和列表
   useEffect(() => {
+    // 从 localStorage 获取用户信息
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      const user = JSON.parse(userStr);
+      setUserId(user.id);
+    }
     loadData();
   }, []);
 
@@ -75,8 +84,9 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
   };
 
   const loadData = async () => {
-    if (!userId) {
-      setError('用户未登录');
+    const currentUserId = userId || localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').id : null;
+    if (!currentUserId) {
+      showToast('用户未登录', 'error');
       return;
     }
 
@@ -84,7 +94,7 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
     setError(null);
     try {
       const [groupsData, basesData] = await Promise.all([
-        knowledgeService.getGroups(userId),
+        knowledgeService.getGroups(currentUserId),
         knowledgeService.getKnowledgeBases(),
       ]);
       setGroups(groupsData);
@@ -119,35 +129,57 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
 
   // 创建知识库分组
   const handleCreateGroup = async () => {
-    if (!userId) {
-      alert('用户未登录');
+    const currentUserId = userId || localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user') || '{}').id : null;
+    if (!currentUserId) {
+      showToast('用户未登录', 'error');
       return;
     }
 
-    const name = prompt('请输入分组名称:');
-    if (!name) return;
-
     try {
-      await knowledgeService.createGroup(userId, name);
+      const name = await showInput({
+        title: '创建分组',
+        placeholder: '请输入分组名称',
+        confirmText: '创建',
+        cancelText: '取消'
+      });
+      if (!name) return;
+
+      await knowledgeService.createGroup(currentUserId, name);
       loadData();
+      showToast('分组创建成功', 'success');
     } catch (err: any) {
-      alert('创建分组失败: ' + err.message);
+      showToast('创建分组失败: ' + err.message, 'error');
     }
   };
 
   // 创建知识库
   const handleCreateBase = async () => {
-    const name = prompt('请输入知识库名称:');
-    if (!name) return;
-
     try {
+      const name = await showInput({
+        title: '创建知识库',
+        placeholder: '请输入知识库名称',
+        confirmText: '下一步',
+        cancelText: '取消'
+      });
+      if (!name) return;
+
+      const description = await showInput({
+        title: '知识库描述',
+        placeholder: '请输入知识库描述（可选）',
+        multiline: true,
+        rows: 3,
+        confirmText: '创建',
+        cancelText: '跳过'
+      });
+
       await knowledgeService.createKnowledgeBase({
         name,
-        description: '',
+        description: description || '',
       });
       loadData();
+      showToast('知识库创建成功', 'success');
     } catch (err: any) {
-      alert('创建知识库失败: ' + err.message);
+      showToast('创建知识库失败: ' + err.message, 'error');
     }
   };
 
@@ -162,7 +194,7 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
 
       try {
         await knowledgeService.uploadDocument(kb.id, file);
-        alert('文档上传成功，正在后台处理...');
+        showToast('文档上传成功，正在后台处理...', 'success');
 
         // 启动状态轮询
         startPollingDocumentStatus(kb.id);
@@ -171,8 +203,9 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
         if (selectedBase?.id === kb.id) {
           loadDocuments(kb);
         }
+        onRefresh();
       } catch (err: any) {
-        alert('文档上传失败: ' + err.message);
+        showToast('文档上传失败: ' + err.message, 'error');
       }
     };
     input.click();
@@ -180,7 +213,15 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
 
   // 删除知识库
   const handleDeleteBase = async (kb: KnowledgeBaseAPI) => {
-    if (!confirm(`确定要删除知识库 "${kb.name}" 吗？`)) return;
+    const confirmed = await showConfirm({
+      title: '删除知识库',
+      message: `确定要删除知识库 "${kb.name}" 吗？此操作无法撤销。`,
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (!confirmed) return;
 
     try {
       await knowledgeService.deleteKnowledgeBase(kb.id);
@@ -189,56 +230,86 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
         setDocuments([]);
       }
       loadData();
+      showToast('知识库已删除', 'success');
     } catch (err: any) {
-      alert('删除知识库失败: ' + err.message);
+      showToast('删除知识库失败: ' + err.message, 'error');
     }
   };
 
   // 删除文档
   const handleDeleteDocument = async (doc: DocumentAPI) => {
-    if (!confirm(`确定要删除文档 "${doc.filename}" 吗？`)) return;
+    const confirmed = await showConfirm({
+      title: '删除文档',
+      message: `确定要删除文档 "${doc.filename}" 吗？`,
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (!confirmed) return;
 
     try {
       await knowledgeService.deleteDocument(selectedBase?.id || '', doc.id);
       if (selectedBase) {
         loadDocuments(selectedBase);
       }
+      showToast('文档已删除', 'success');
+      onRefresh();
     } catch (err: any) {
-      alert('删除文档失败: ' + err.message);
+      showToast('删除文档失败: ' + err.message, 'error');
     }
   };
 
   if (loading && groups.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-gray-500">加载中...</div>
+        <Loader2 className="animate-spin text-blue-600 mx-auto mb-4" size={40} />
+        <p className="text-gray-600">加载中...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full bg-gray-50">
-      {/* 左侧：知识库列表 */}
-      <div className="w-1/3 border-r border-gray-200 p-4 overflow-y-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">知识库</h2>
-          <div className="flex gap-2">
-            <button
-              onClick={handleCreateGroup}
-              className="p-1 hover:bg-gray-200 rounded"
-              title="创建分组"
-            >
-              <FolderOpen size={16} />
-            </button>
-            <button
-              onClick={handleCreateBase}
-              className="p-1 hover:bg-gray-200 rounded"
-              title="创建知识库"
-            >
-              <Plus size={16} />
-            </button>
+    <div className="flex flex-col h-full bg-gray-50">
+      {/* 顶部导航栏 */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            title="返回聊天"
+          >
+            <ArrowLeft size={20} className="text-gray-600" />
+          </button>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">知识库管理</h1>
+            <p className="text-sm text-gray-500">管理您的知识库和文档</p>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCreateGroup}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+          >
+            <FolderOpen size={16} />
+            <span>新建分组</span>
+          </button>
+          <button
+            onClick={handleCreateBase}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+          >
+            <Plus size={16} />
+            <span>新建知识库</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 主内容区域 */}
+      <div className="flex flex-1 overflow-hidden">
+      {/* 左侧：知识库列表 */}
+      <div className="w-1/3 border-r border-gray-200 bg-white overflow-y-auto">
+        <div className="p-4">
+          <h2 className="text-lg font-semibold mb-4">知识库列表</h2>
 
         {error && (
           <div className="bg-red-50 text-red-600 p-2 rounded mb-4 text-sm">
@@ -292,6 +363,7 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {/* 右侧：文档列表 */}
@@ -358,6 +430,9 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
           </div>
         )}
       </div>
+      </div>
     </div>
   );
 }
+
+export default KnowledgePanel;

@@ -10,6 +10,8 @@ import { FavoriteModal } from './components/FavoriteModal';
 import { FavoriteButton } from './components/FavoriteButton';
 import MessageContent from './MessageContent';
 import KnowledgeBaseDetail from './components/KnowledgeBaseDetail';
+import KnowledgeManageModal from './components/KnowledgeManageModal';
+import { ModalProvider, useModal } from './contexts/ModalContext';
 import { Message, ChatSession, User, LLMModel, Agent, AgentAPI, AgentType, KnowledgeGroup, KnowledgeBase } from './types';
 import { chatService } from './services/chatService';
 import { authService } from './services/authService';
@@ -18,12 +20,15 @@ import { modelService } from './services/modelService';
 import { agentService } from './services/agentService';
 import { knowledgeService } from './services/knowledgeService';
 
-const App: React.FC = () => {
+// 内部组件，可以使用 useModal hook
+const AppContent: React.FC = () => {
+  const { showToast, showConfirm, showInput } = useModal();
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
   const [view, setView] = useState<'chat' | 'admin' | 'knowledge'>('chat');
+  const [isKnowledgeManageOpen, setIsKnowledgeManageOpen] = useState(false);
   const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -473,12 +478,25 @@ const App: React.FC = () => {
   // ✅ 处理创建知识库
   const handleCreateKnowledgeBase = async () => {
     if (!currentUser) return;
-    try {
-      // 弹出输入框
-      const name = prompt('请输入知识库名称:');
-      if (!name || !name.trim()) return;
 
-      const description = prompt('请输入知识库描述（可选）:');
+    try {
+      // 使用自定义输入对话框
+      const name = await showInput({
+        title: '创建知识库',
+        placeholder: '请输入知识库名称',
+        confirmText: '下一步',
+        cancelText: '取消'
+      });
+      if (!name) return;
+
+      const description = await showInput({
+        title: '知识库描述',
+        placeholder: '请输入知识库描述（可选）',
+        multiline: true,
+        rows: 3,
+        confirmText: '创建',
+        cancelText: '跳过'
+      });
 
       // ✅ 调用创建接口（不需要 group_id）
       await knowledgeService.createKnowledgeBase({
@@ -489,9 +507,9 @@ const App: React.FC = () => {
 
       // 刷新列表
       await refreshKnowledge();
-      alert('知识库创建成功！');
+      showToast('知识库创建成功！', 'success');
     } catch (e: any) {
-      alert('创建知识库失败: ' + e.message);
+      showToast('创建知识库失败: ' + e.message, 'error');
     }
   };
 
@@ -514,13 +532,13 @@ const App: React.FC = () => {
         currentUser={currentUser}
         onLogout={handleLogout}
         onOpenAdmin={() => setView('admin')}
+        onOpenManage={() => setIsKnowledgeManageOpen(true)}
         onOpenFavorites={() => setIsFavoritesOpen(true)}
         agents={agents}
         selectedAgent={selectedAgent}
         onAgentClick={handleAgentClick}
         knowledgeBases={knowledgeBases}
         onKnowledgeRefresh={refreshKnowledge}
-        onCreateKnowledgeBase={handleCreateKnowledgeBase}
         onSelectKnowledgeBase={handleSelectKnowledgeBase}
       />
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white md:bg-[#F7F7F8]">
@@ -665,7 +683,22 @@ const App: React.FC = () => {
         isOpen={isFavoritesOpen}
         onClose={() => setIsFavoritesOpen(false)}
       />
+
+      <KnowledgeManageModal
+        isOpen={isKnowledgeManageOpen}
+        onClose={() => setIsKnowledgeManageOpen(false)}
+        onRefresh={refreshKnowledge}
+      />
     </div>
+  );
+};
+
+// 包装器组件，提供 Modal Context
+const App: React.FC = () => {
+  return (
+    <ModalProvider>
+      <AppContent />
+    </ModalProvider>
   );
 };
 

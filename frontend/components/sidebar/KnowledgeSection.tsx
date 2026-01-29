@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, ChevronUp, Plus, Settings, Database, Book } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings, Database, Book } from 'lucide-react';
 import { KnowledgeBase } from '../../types';
 
 interface KnowledgeSectionProps {
@@ -7,7 +7,6 @@ interface KnowledgeSectionProps {
   isExpanded: boolean;
   onToggle: () => void;
   onOpenManage: () => void;
-  onCreateBase: () => void;
   onSelectBase: (baseId: string) => void;
 }
 
@@ -16,7 +15,6 @@ const KnowledgeSection: React.FC<KnowledgeSectionProps> = ({
   isExpanded,
   onToggle,
   onOpenManage,
-  onCreateBase,
   onSelectBase
 }) => {
   return (
@@ -57,15 +55,6 @@ const KnowledgeSection: React.FC<KnowledgeSectionProps> = ({
               </div>
             </div>
           ))}
-
-          {/* 新建知识库按钮 */}
-          <button
-            onClick={onCreateBase}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-          >
-            <Plus size={14} />
-            <span>新建知识库</span>
-          </button>
         </div>
       )}
     </div>

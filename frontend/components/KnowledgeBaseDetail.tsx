@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Upload, FileText, Loader2, FileText as FileIcon, X } from 'lucide-react';
+import { ArrowLeft, Upload, FileText, Loader2, FileText as FileIcon, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { knowledgeService } from '../services/knowledgeService';
+import { useModal } from '../contexts/ModalContext';
 
 interface KnowledgeBaseDetailProps {
   baseId: string;
@@ -30,6 +31,7 @@ interface Chunk {
 }
 
 const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClose, onSuccess }) => {
+  const { showToast, showConfirm } = useModal();
   const [base, setBase] = useState<any>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -37,6 +39,11 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [loadingChunks, setLoadingChunks] = useState(false);
+
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(10); // 每页显示 10 个切片
+  const [totalCount, setTotalCount] = useState(0);
 
   // 加载知识库详情
   const loadKnowledgeBase = async () => {
@@ -62,17 +69,52 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
   };
 
   // 加载文档切片
-  const loadChunks = async (docId: string) => {
+  const loadChunks = async (docId: string, page: number = 1) => {
     setLoadingChunks(true);
     try {
-      const data = await knowledgeService.getDocumentChunks(docId, baseId);
-      setChunks(data.chunks || []);
+      console.log('🔍 开始加载切片, docId:', docId, 'baseId:', baseId, 'page:', page);
+      const offset = (page - 1) * pageSize;
+      const data = await knowledgeService.getDocumentChunks(docId, baseId, offset, pageSize);
+
+      console.log('📦 原始 API 响应:', data);
+      console.log('📦 响应类型:', typeof data);
+      console.log('📦 是否为数组:', Array.isArray(data));
+      console.log('📦 是否有 chunks 字段:', 'chunks' in data);
+
+      const chunksArray = data.chunks || [];
+
+      console.log('📦 提取的 chunks 数组:', chunksArray);
+      console.log('📦 Chunks 长度:', chunksArray.length);
+      console.log('📦 Total count:', data.total_count);
+
+      // 更新总数
+      if (data.total_count !== undefined) {
+        setTotalCount(data.total_count);
+      }
+
+      // 调试日志：查看实际数据
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📦 Chunks loaded:', chunksArray.length);
+        if (chunksArray.length > 0) {
+          console.log('📦 First chunk:', chunksArray[0]);
+        }
+      }
+
+      setChunks(chunksArray);
       setSelectedDocId(docId);
+      setCurrentPage(page);
     } catch (e: any) {
-      console.error('Failed to load chunks:', e);
-      alert('加载切片失败: ' + e.message);
+      console.error('❌ Failed to load chunks:', e);
+      showToast('加载切片失败: ' + e.message, 'error');
     } finally {
       setLoadingChunks(false);
+    }
+  };
+
+  // 切换页面
+  const handlePageChange = (newPage: number) => {
+    if (selectedDocId && newPage >= 1 && newPage <= Math.ceil(totalCount / pageSize)) {
+      loadChunks(selectedDocId, newPage);
     }
   };
 
@@ -89,11 +131,11 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
     setUploading(true);
     try {
       await knowledgeService.uploadDocument(baseId, file);
-      alert('文件上传成功！正在后台处理...');
+      showToast('文件上传成功！正在后台处理...', 'success');
       await loadDocuments();
       onSuccess?.();
     } catch (e: any) {
-      alert('文件上传失败: ' + e.message);
+      showToast('文件上传失败: ' + e.message, 'error');
     } finally {
       setUploading(false);
       e.target.value = '';
@@ -102,7 +144,15 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
 
   // 删除文档
   const handleDeleteDocument = async (docId: string) => {
-    if (!confirm('确定删除这个文档吗？')) return;
+    const confirmed = await showConfirm({
+      title: '删除文档',
+      message: '确定删除这个文档吗？',
+      type: 'danger',
+      confirmText: '删除',
+      cancelText: '取消'
+    });
+
+    if (!confirmed) return;
 
     try {
       await knowledgeService.deleteDocument(baseId, docId);
@@ -110,11 +160,13 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
       if (selectedDocId === docId) {
         setSelectedDocId(null);
         setChunks([]);
+        setCurrentPage(1);
+        setTotalCount(0);
       }
-      alert('文档已删除');
+      showToast('文档已删除', 'success');
       onSuccess?.();
     } catch (e: any) {
-      alert('删除失败: ' + e.message);
+      showToast('删除失败: ' + e.message, 'error');
     }
   };
 
@@ -272,7 +324,8 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
               <div className="bg-white border-b border-gray-200 px-6 py-4">
                 <h3 className="text-lg font-bold text-gray-900 mb-1">文档切片</h3>
                 <p className="text-sm text-gray-500">
-                  共 {chunks.length} 个切片
+                  共 {totalCount} 个切片
+                  {totalCount > pageSize && ` · 第 ${currentPage} 页`}
                   {loadingChunks && ' (加载中...)'}
                 </p>
               </div>
@@ -290,28 +343,63 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
                     <p className="text-xs mt-2">文档可能还在处理中，请稍后刷新</p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    {chunks.map((chunk: Chunk, index: number) => (
-                      <div
-                        key={chunk.id}
-                        className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm"
-                      >
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs font-bold text-blue-600">
-                            切片 #{chunk.chunk_index + 1}
-                          </span>
-                          {chunk.metadata && (
-                            <span className="text-xs text-gray-400">
-                              {chunk.metadata.filename}
+                  <>
+                    <div className="space-y-4">
+                      {chunks.map((chunk: any, index: number) => (
+                        <div
+                          key={chunk.id}
+                          className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-xs font-bold text-blue-600">
+                              切片 #{chunk.chunk_index + 1}
                             </span>
-                          )}
+                            {chunk.metadata && chunk.metadata.filename && (
+                              <span className="text-xs text-gray-400">
+                                {chunk.metadata.filename}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            {chunk.content}
+                          </div>
                         </div>
-                        <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                          {chunk.content}
+                      ))}
+                    </div>
+
+                    {/* 分页组件 */}
+                    {totalCount > pageSize && (
+                      <div className="mt-6 flex items-center justify-between bg-white rounded-lg border border-gray-200 px-4 py-3">
+                        <button
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          disabled={currentPage === 1}
+                          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <ChevronLeft size={16} />
+                          上一页
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-600">
+                            第 <span className="font-bold text-gray-900">{currentPage}</span> /
+                            <span className="font-bold text-gray-900">{Math.ceil(totalCount / pageSize)}</span> 页
+                          </span>
+                          <span className="text-sm text-gray-500">
+                            ({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)} / {totalCount})
+                          </span>
                         </div>
+
+                        <button
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                          className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          下一页
+                          <ChevronRight size={16} />
+                        </button>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </>
                 )}
               </div>
             </>

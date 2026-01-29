@@ -134,6 +134,17 @@ class AgentService:
             return
 
         self.tools: Dict[str, Callable] = {}
+        self.tool_metadata: Dict[str, Any] = {}  # ✅ 新增: 工具元数据管理
+
+        # ✅ 新增: 初始化 LLM 推理器
+        try:
+            from .llm_reasoner import LLMReasoner
+            self.reasoner = LLMReasoner()
+            logger.info("✅ LLMReasoner 初始化成功")
+        except Exception as e:
+            logger.error(f"❌ LLMReasoner 初始化失败: {e}")
+            self.reasoner = None
+
         self._register_default_tools()
         AgentService._initialized = True
         logger.info("AgentService 单例初始化完成")
@@ -161,16 +172,53 @@ class AgentService:
 
         logger.info(f"已注册 {len(self.tools)} 个工具")
 
-    def register_tool(self, name: str, func: Callable) -> None:
+    def register_tool(self, name: str, func: Callable, metadata: Dict[str, Any] = None) -> None:
         """
         注册工具
 
         Args:
             name: 工具名称
             func: 工具函数
+            metadata: 工具元数据 (可选)
         """
+        # 检查重复注册
+        if name in self.tools:
+            logger.warning(f"⚠️ 工具 {name} 已存在,将被覆盖")
+
+        # 存储元数据
+        if metadata:
+            self.tool_metadata[name] = metadata
+            logger.info(f"✅ 注册工具元数据: {name} - {metadata.get('display_name', name)}")
+
         self.tools[name] = func
-        logger.info(f"注册工具: {name}")
+        logger.info(f"✅ 注册工具: {name}")
+
+    def get_tool_metadata(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """
+        获取工具元数据
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            工具元数据,如果不存在返回 None
+        """
+        return self.tool_metadata.get(tool_name)
+
+    def list_tools(self) -> List[Dict[str, Any]]:
+        """
+        列出所有工具 (带元数据)
+
+        Returns:
+            工具列表,每个工具包含名称和元数据
+        """
+        return [
+            {
+                "name": name,
+                **self.tool_metadata.get(name, {})
+            }
+            for name in self.tools
+        ]
 
     async def execute_tool(
         self,
@@ -273,69 +321,157 @@ class AgentService:
         }
 
         # 创建带配置的闭包节点函数
-        def make_think_node(agent_cfg):
+        def make_think_node(agent_cfg, agent_service):
+            """
+            创建思考节点 (使用 LLM 推理)
+
+            Args:
+                agent_cfg: Agent 配置
+                agent_service: AgentService 实例 (用于访问 LLMReasoner)
+            """
             async def think_node(state: AgentState) -> AgentState:
-                """思考节点：决定下一步行动（不可变状态更新）"""
+                """
+                思考节点: 使用 LLM 进行推理和工具决策
+
+                真正的 ReAct 实现:
+                1. 将当前状态、对话历史、可用工具发送给 LLM
+                2. LLM 生成推理链 (Thought)
+                3. LLM 决定是否使用工具以及使用哪个工具 (Action)
+                4. 返回增强的状态
+                """
                 max_steps = agent_cfg["config"].get("max_steps", DEFAULT_MAX_STEPS)
                 current_steps = state.get(STATE_STEPS, 0)
 
                 logger.info(f"🤔 [思考节点] 开始思考...")
-                logger.info(f"🤔 [思考节点] 当前步骤: {current_steps}")
-                logger.info(f"🤔 [思考节点] 最大步数: {max_steps}")
-                logger.info(f"🤔 [思考节点] 输入: {state.get(STATE_INPUT, '')[:100]}...")
-                logger.info(f"🤔 [思考节点] agent_config: {agent_cfg}")
+                logger.info(f"🤔 [思考节点] 当前步骤: {current_steps}/{max_steps}")
 
-                # 创建新状态（不可变更新）
+                # 1. 检查最大步数
                 if current_steps >= max_steps:
                     logger.warning(f"⚠️  [思考节点] 达到最大步数限制: {max_steps}")
                     return {
                         **state,
                         STATE_OUTPUT: f"已达到最大步数限制 ({max_steps})，停止执行。",
-                        STATE_ERROR: ERROR_MAX_STEPS
+                        STATE_ERROR: ERROR_MAX_STEPS,
+                        "finished": True
                     }
 
-                new_state = {
-                    **state,
-                    STATE_STEPS: current_steps + 1
-                }
-                logger.info(f"✅ [思考节点] 思考完成，进入第 {new_state[STATE_STEPS]} 步")
-                return new_state
+                # 2. ✅ 使用 LLM 进行推理
+                if agent_service.reasoner is None:
+                    logger.error("❌ LLMReasoner 未初始化,无法推理")
+                    return {
+                        **state,
+                        STATE_ERROR: "LLMReasoner 未初始化",
+                        STATE_STEPS: current_steps + 1,
+                        "finished": True
+                    }
+
+                try:
+                    available_tools = agent_cfg.get("tools", [])
+                    conversation_history = state.get(STATE_MESSAGES, [])
+                    previous_steps = state.get(STATE_TOOLS_CALLED, [])
+
+                    logger.info(f"🤔 [思考节点] 可用工具: {available_tools}")
+                    logger.info(f"🤔 [思考节点] 对话轮数: {len(conversation_history)}")
+
+                    # 调用 LLM 推理器
+                    decision = await agent_service.reasoner.reason(
+                        question=state[STATE_INPUT],
+                        available_tools=available_tools,
+                        conversation_history=conversation_history,
+                        previous_steps=previous_steps,
+                        agent_config=agent_cfg
+                    )
+
+                    logger.info(f"🧠 [LLM 推理结果]")
+                    logger.info(f"   推理: {decision['reasoning'][:100]}...")
+                    logger.info(f"   工具: {decision['tool']}")
+                    logger.info(f"   置信度: {decision['confidence']}")
+                    logger.info(f"   继续: {decision['should_continue']}")
+
+                    # 3. 返回增强的状态
+                    new_state = {
+                        **state,
+                        STATE_STEPS: current_steps + 1,
+                        "reasoning": decision["reasoning"],      # ✅ 推理链
+                        "tool_decision": {                       # ✅ 工具决策
+                            "tool": decision["tool"],
+                            "parameters": decision["parameters"],
+                            "confidence": decision["confidence"]
+                        },
+                        "should_continue": decision["should_continue"]  # ✅ 是否继续
+                    }
+
+                    logger.info(f"✅ [思考节点] LLM 推理完成,进入第 {new_state[STATE_STEPS]} 步")
+                    return new_state
+
+                except Exception as e:
+                    logger.error(f"❌ [思考节点] LLM 推理失败: {e}")
+                    # 降级到错误状态
+                    return {
+                        **state,
+                        STATE_ERROR: f"推理失败: {str(e)}",
+                        STATE_STEPS: current_steps + 1,
+                        "finished": True
+                    }
+
             return think_node
 
-        def make_act_node(agent_cfg, user_id_val):
+        def make_act_node(agent_cfg, user_id_val, agent_service):
+            """
+            创建行动节点 (执行 LLM 决策的工具)
+
+            Args:
+                agent_cfg: Agent 配置
+                user_id_val: 用户 ID
+                agent_service: AgentService 实例
+            """
             async def act_node(state: AgentState) -> AgentState:
-                """行动节点：执行工具或生成回答（不可变状态更新）"""
+                """
+                行动节点: 执行 LLM 决策的工具
+
+                从 state["tool_decision"] 中获取 LLM 的决策,然后执行工具
+                """
                 available_tools = agent_cfg["tools"]
-                input_text = state.get(STATE_INPUT, "")
                 tools_called = list(state.get(STATE_TOOLS_CALLED, []))  # 创建副本
 
                 logger.info(f"🎬 [行动节点] 开始行动...")
                 logger.info(f"🎬 [行动节点] 可用工具: {available_tools}")
-                logger.info(f"🎬 [行动节点] 输入文本: {input_text[:100]}...")
-                logger.info(f"🎬 [行动节点] agent_config: {agent_cfg}")
-                logger.info(f"🎬 [行动节点] agent_config 类型: {type(agent_cfg)}")
 
-                # 决定使用哪个工具
-                tool_decision = self._decide_tool(input_text, available_tools, agent_cfg)
+                # 1. 获取 LLM 的决策
+                tool_decision = state.get("tool_decision", {})
+                tool_name = tool_decision.get("tool")
+                parameters = tool_decision.get("parameters", {})
+                reasoning = state.get("reasoning", "")
 
-                if tool_decision is None:
-                    # 没有合适的工具
-                    logger.warning(f"⚠️  [行动节点] 未找到合适的工具")
-                    return {
-                        **state,
-                        STATE_OUTPUT: ERROR_NO_TOOL_MSG.format(input_text)
-                    }
-
-                tool_name, parameters = tool_decision
-                logger.info(f"🎯 [行动节点] 选择工具: {tool_name}")
+                logger.info(f"🧠 [行动节点] LLM 推理: {reasoning[:100]}...")
+                logger.info(f"🎯 [行动节点] LLM 决策工具: {tool_name}")
                 logger.info(f"🎯 [行动节点] 工具参数: {parameters}")
 
-                # 执行工具
+                # 2. 如果没有选择工具,直接返回
+                if not tool_name:
+                    logger.info("ℹ️  [行动节点] LLM 决定不使用工具,生成最终答案")
+                    return {
+                        **state,
+                        STATE_OUTPUT: reasoning or "无法生成答案",
+                        "finished": True
+                    }
+
+                # 3. 检查工具是否可用
+                if tool_name not in available_tools:
+                    error_msg = f"❌ 工具 {tool_name} 不可用"
+                    logger.error(error_msg)
+                    return {
+                        **state,
+                        STATE_ERROR: error_msg,
+                        "finished": True
+                    }
+
+                # 4. 执行工具
                 try:
                     logger.info(f"⚙️  [行动节点] 开始执行工具: {tool_name}...")
                     tool_start_time = datetime.now()
 
-                    result = await self.execute_tool(
+                    result = await agent_service.execute_tool(
                         tool_name=tool_name,
                         parameters=parameters,
                         context={
@@ -349,34 +485,40 @@ class AgentService:
                     logger.info(f"✅ [行动节点] 结果类型: {type(result).__name__}")
                     logger.info(f"✅ [行动节点] 结果长度: {len(str(result))} 字符")
 
-                    # 创建新的工具调用列表（不可变更新）
+                    # 5. 记录工具调用
                     new_tools_called = tools_called + [{
+                        "step": state.get(STATE_STEPS, 0),
                         "tool": tool_name,
                         "parameters": parameters,
-                        "result": result
+                        "result": result,
+                        "reasoning": reasoning,
+                        "duration": tool_duration
                     }]
 
+                    # 6. 返回更新后的状态
                     return {
                         **state,
                         STATE_TOOLS_CALLED: new_tools_called,
-                        STATE_LAST_RESULT: result
+                        "last_tool_result": result,
+                        STATE_ERROR: None  # 清除错误状态
                     }
 
-                except ToolExecutionError as e:
+                except Exception as e:
                     logger.error(f"❌ [行动节点] 工具执行失败: {tool_name}")
                     logger.error(f"❌ [行动节点] 错误信息: {str(e)}")
                     return {
                         **state,
-                        STATE_ERROR: str(e)
+                        STATE_ERROR: f"工具执行失败: {str(e)}",
+                        "finished": True
                     }
 
             return act_node
 
         workflow = StateGraph(AgentState)
 
-        # 添加节点（使用闭包捕获配置）
-        workflow.add_node(NODE_THINK, make_think_node(agent_config))
-        workflow.add_node(NODE_ACT, make_act_node(agent_config, user_id))
+        # 添加节点（使用闭包捕获配置）- ✅ 传入 self (AgentService 实例)
+        workflow.add_node(NODE_THINK, make_think_node(agent_config, self))
+        workflow.add_node(NODE_ACT, make_act_node(agent_config, user_id, self))
         workflow.add_node(NODE_OBSERVE, self._observe_node)
 
         # 设置入口
@@ -633,36 +775,127 @@ class AgentService:
         return None
 
     async def _observe_node(self, state: AgentState) -> AgentState:
-        """观察节点：根据结果决定下一步（不可变状态更新）"""
+        """
+        观察节点: 判断是否继续循环或生成最终答案
+
+        基于 LLM 的决策 (should_continue) 和执行结果,决定下一步
+        """
         logger.info(f"👀️ [观察节点] 开始观察...")
 
+        # 1. 检查错误状态
         error = state.get(STATE_ERROR)
         if error:
             logger.error(f"❌ [观察节点] 检测到错误: {error}")
             return {
                 **state,
-                STATE_OUTPUT: ERROR_EXECUTION_MSG.format(error)
+                STATE_OUTPUT: f"执行出错: {error}",
+                "finished": True
             }
 
-        # 根据工具结果生成最终回答
+        # 2. ✅ 使用 LLM 的决策判断是否继续
+        should_continue = state.get("should_continue", False)
+        finished = state.get("finished", False)
         tools_called = state.get(STATE_TOOLS_CALLED, [])
-        if tools_called:
-            last_tool = tools_called[-1]
-            logger.info(f"👀️ [观察节点] 最后调用的工具: {last_tool['tool']}")
-            output = self._format_tool_output(last_tool)
-            logger.info(f"✅ [观察节点] 生成输出: {output[:100]}...")
+
+        logger.info(f"👀️ [观察节点] should_continue: {should_continue}")
+        logger.info(f"👀️ [观察节点] finished: {finished}")
+        logger.info(f"👀️ [观察节点] 已调用工具数: {len(tools_called)}")
+
+        # 3. 如果已经标记为完成或 LLM 认为不应该继续,生成最终答案
+        if finished or not should_continue or not state.get("tool_decision", {}).get("tool"):
+            logger.info(f"✅ [观察节点] 生成最终答案")
+            final_answer = await self._generate_final_answer(state)
             return {
                 **state,
-                STATE_OUTPUT: output
+                STATE_OUTPUT: final_answer,
+                "finished": True
             }
-        else:
-            # 没有工具调用记录，返回默认消息
-            logger.info(f"ℹ️  [观察节点] 没有工具调用记录，返回默认消息")
-            input_text = state.get(STATE_INPUT, "")
-            return {
-                **state,
-                STATE_OUTPUT: ERROR_NO_TOOL_MSG.format(input_text)
-            }
+
+        # 4. 否则继续循环,回到 Think 节点
+        logger.info(f"🔄 [观察节点] 继续循环,回到 Think 节点")
+        return {
+            **state,
+            STATE_OUTPUT: "",  # 清空输出,继续循环
+            "finished": False
+        }
+
+    async def _generate_final_answer(self, state: AgentState) -> str:
+        """
+        基于所有工具调用结果,生成最终答案
+
+        Args:
+            state: Agent 状态
+
+        Returns:
+            最终答案
+        """
+        tools_called = state.get(STATE_TOOLS_CALLED, [])
+        original_question = state.get(STATE_INPUT, "")
+        reasoning = state.get("reasoning", "")
+
+        logger.info(f"📝 [生成最终答案] 工具调用数: {len(tools_called)}")
+
+        # 如果没有调用任何工具,使用推理结果
+        if not tools_called:
+            logger.info(f"📝 [生成最终答案] 无工具调用,使用推理结果")
+            return reasoning or "我无法回答这个问题。"
+
+        # 如果只有一个工具,直接格式化结果
+        if len(tools_called) == 1:
+            logger.info(f"📝 [生成最终答案] 单工具结果")
+            return self._format_tool_output(tools_called[0])
+
+        # 多个工具: 使用 LLM 生成综合答案
+        logger.info(f"📝 [生成最终答案] 多工具综合答案")
+
+        # 构建提示词
+        prompt = f"""基于以下工具调用结果,请生成一个完整、准确的答案来回答用户问题。
+
+## 用户原始问题
+
+{original_question}
+
+## 工具调用过程
+
+"""
+
+        for i, call in enumerate(tools_called, 1):
+            prompt += f"\n### 步骤 {i}\n"
+            prompt += f"推理: {call.get('reasoning', '无')}\n"
+            prompt += f"工具: {call['tool']}\n"
+            prompt += f"参数: {call['parameters']}\n"
+            prompt += f"结果: {str(call['result'])[:500]}\n"
+
+        prompt += """
+## 任务
+
+请综合以上所有步骤的结果,生成一个清晰、准确的最终答案。
+
+要求:
+1. 答案应该直接回答用户的问题
+2. 如果涉及计算,给出具体数值
+3. 如果涉及搜索,引用关键信息
+4. 使用简洁易懂的语言
+
+请生成最终答案:"""
+
+        try:
+            if self.reasoner and self.reasoner.llm:
+                response = await self.reasoner.llm.ainvoke(prompt)
+                answer = response.content.strip()
+                logger.info(f"✅ [生成最终答案] LLM 综合答案生成完成")
+                return answer
+        except Exception as e:
+            logger.error(f"❌ [生成最终答案] LLM 生成失败: {e}")
+
+        # 降级: 简单拼接结果
+        logger.warning(f"⚠️ [生成最终答案] 使用降级方案(拼接结果)")
+        results = []
+        for call in tools_called:
+            formatted = self._format_tool_output(call)
+            results.append(f"步骤 {call.get('step', '?')}: {formatted}")
+
+        return "基于以上工具调用结果:\n\n" + "\n\n".join(results)
 
     def _format_tool_output(self, tool_call: Dict[str, Any]) -> str:
         """格式化工具输出"""
@@ -981,6 +1214,24 @@ class AgentService:
                         "state": serialize_state(node_state),
                         "timestamp": datetime.now().isoformat()
                     }
+
+                    # ✅ 新增: 推送推理事件 (如果有)
+                    if node_name == NODE_THINK:
+                        reasoning = node_state.get("reasoning", "")
+                        tool_decision = node_state.get("tool_decision", {})
+
+                        if reasoning or tool_decision.get("tool"):
+                            logger.info(f"🧠 [推理事件] 推理: {reasoning[:100]}...")
+                            logger.info(f"🧠 [推理事件] 工具决策: {tool_decision}")
+
+                            yield {
+                                "type": "reasoning",  # ✅ 新增事件类型
+                                "step": node_state.get(STATE_STEPS, 0),
+                                "node": node_name,
+                                "reasoning": reasoning,
+                                "tool_decision": tool_decision,
+                                "timestamp": datetime.now().isoformat()
+                            }
 
                     tools_called = node_state.get(STATE_TOOLS_CALLED, [])
                     if tools_called:
