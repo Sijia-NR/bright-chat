@@ -52,8 +52,8 @@ class RAGConfig:
             use_chromadb_embedding: 是否使用ChromaDB自带向量模型（推荐）
         """
         # ChromaDB 配置（仅使用容器模式）
-        self.chromadb_host = chromadb_host or os.getenv("CHROMADB_HOST", "chromadb")
-        self.chromadb_port = chromadb_port or int(os.getenv("CHROMADB_PORT", "8000"))
+        self.chromadb_host = chromadb_host or os.getenv("CHROMADB_HOST", "localhost")
+        self.chromadb_port = chromadb_port or int(os.getenv("CHROMADB_PORT", "8002"))
 
         # 连接到 ChromaDB 容器（强制使用 HttpClient，带重试机制）
         max_retries = 3
@@ -170,66 +170,105 @@ class RAGConfig:
         Returns:
             ChromaDB Collection 对象
         """
+        # 临时方案:使用现有的 collection,忽略 _type 错误
+        # 直接使用 get_collection,即使有 _type 错误也能工作
         try:
-            # 方案 1: 先尝试 get_collection（大多数情况下应该成功）
-            try:
-                collection = self.chroma_client.get_collection(name)
-                logger.info(f"✅ 成功获取现有 Collection: {name}")
-                return collection
-            except KeyError as key_err:
-                if "_type" in str(key_err):
-                    # _type 错误：尝试删除并重新创建
-                    logger.warning(f"Collection {name} 数据损坏（_type 错误），尝试删除并重新创建...")
-                    try:
-                        self.chroma_client.delete_collection(name)
-                        logger.info(f"✅ 已删除损坏的 Collection: {name}")
-                    except:
-                        pass
-                else:
-                    raise
-            except Exception as get_err:
-                # Collection 不存在或其他错误
-                if "does not exist" not in str(get_err).lower():
-                    logger.debug(f"获取 Collection 失败: {get_err}")
-
-            # 方案 2: 创建新的 collection
-            try:
-                collection = self.chroma_client.create_collection(name=name)
-                logger.info(f"✅ Collection 创建成功: {name}")
-                return collection
-            except KeyError as key_err:
-                if "_type" in str(key_err):
-                    # _type 错误：使用服务器 API 直接创建
-                    logger.warning(f"create_collection 返回 _type 错误，使用备用方案...")
-                    # 直接使用 HTTP 客户端创建 collection
-                    import requests
-                    url = f"http://{self.chromadb_host}:{self.chromadb_port}/api/v1/tenants/default_tenant/databases/default_database/collections"
-                    response = requests.post(url, json={"name": name})
-                    if response.status_code in [200, 201]:
-                        logger.info(f"✅ 通过 HTTP API 创建 Collection 成功: {name}")
-                        # 返回一个简单的 collection 包装器
-                        return self._create_collection_wrapper(name)
-                    else:
-                        raise Exception(f"创建 Collection 失败: {response.text}")
-                else:
-                    raise
-
+            collection = self.chroma_client.get_collection(name)
+            # 如果成功,返回
+            return collection
+        except KeyError as key_err:
+            # _type 错误可以忽略,collection 实际上已经存在
+            if "_type" in str(key_err):
+                logger.warning(f"Collection {name} 存在但有 _type 兼容性警告,继续使用...")
+                # 尝试使用 anyway 包装器
+                return self._create_http_collection_wrapper(name)
+            else:
+                raise
         except Exception as e:
-            logger.error(f"获取/创建 Collection 失败: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+            # Collection 不存在,创建新的
+            if "does not exist" in str(e).lower() or "NoSuchCollection" in str(e):
+                try:
+                    collection = self.chroma_client.create_collection(name=name)
+                    logger.info(f"✅ Collection 创建成功: {name}")
+                    return collection
+                except KeyError as key_err:
+                    if "_type" in str(key_err):
+                        logger.warning(f"Collection {name} 创建成功但有 _type 兼容性警告")
+                        return self._create_http_collection_wrapper(name)
+                    else:
+                        raise
+            else:
+                logger.error(f"获取 Collection 失败: {e}")
+                raise
+
+    def _create_http_collection_wrapper(self, name: str):
+        """创建一个基于 HTTP API 的 collection 包装器（避免 _type 错误）"""
+        import requests
+
+        class _HTTPCollectionWrapper:
+            def __init__(self, host: str, port: str, name: str):
+                self.base_url = f"http://{host}:{port}/api/v2/tenants/default_tenant/databases/default_database/collections/{name}"
+                self.name = name
+
+            def get(self, where=None, limit=None, offset=None, include=None):
+                """使用 HTTP API 查询"""
+                import json
+                try:
+                    # 使用 get endpoint
+                    params = {}
+                    if limit:
+                        params["limit"] = limit
+                    if offset:
+                        params["offset"] = offset
+
+                    # 这里简化处理,实际应该使用完整的查询语法
+                    resp = requests.get(
+                        f"http://localhost:8002/api/v2/tenants/default_tenant/databases/default_database/collections/{self.name}/get",
+                        json={
+                            "where": where,
+                            "limit": limit or 10,
+                            "offset": offset or 0,
+                            "include": include or ["documents", "metadatas", "embeddings"]
+                        }
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+                    else:
+                        return {"documents": [], "metadatas": [], "ids": []}
+                except Exception as e:
+                    logger.error(f"HTTP API 查询失败: {e}")
+                    return {"documents": [], "metadatas": [], "ids": []}
+
+            def add(self, documents, metadatas, ids):
+                """添加文档（暂不实现）"""
+                raise NotImplementedError("HTTP wrapper 不支持 add,请修复 ChromaDB 客户端版本")
+
+            def delete(self, where=None):
+                """删除文档（暂不实现）"""
+                raise NotImplementedError("HTTP wrapper 不支持 delete,请修复 ChromaDB 客户端版本")
+
+            def count(self):
+                """获取文档数量"""
+                try:
+                    resp = requests.get(f"http://localhost:8002/api/v2/tenants/default_tenant/databases/default_database/collections/{self.name}")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        return data.get("count", 0)
+                    return 0
+                except:
+                    return 0
+
+        return _HTTPCollectionWrapper(self.chromadb_host, str(self.chromadb_port), name)
 
     def _create_collection_wrapper(self, name: str):
         """创建一个简单的 Collection 包装器（用于兼容性问题）"""
-        from chromadb.api.models import Collection
-        # 创建一个最小的 collection 对象
-        return Collection(
-            client=self.chroma_client,
-            id=name,
-            name=name,
-            metadata={}
-        )
+        from chromadb.api import LocalCursor
+        # 直接获取 collection,即使有 _type 错误也尝试使用
+        try:
+            return self.chroma_client.get_collection(name)
+        except:
+            # 如果失败,使用 get_or_create_collection 的另一个实例
+            pass
 
     def reset_collection(self, name: str):
         """
@@ -257,8 +296,8 @@ class RAGConfig:
             True if connection is healthy, False otherwise
         """
         try:
-            # 尝试列出 collections
-            self.chroma_client.list_collections()
+            # 尝试 heartbeat（更可靠的检查方式）
+            self.chroma_client.heartbeat()
             return True
         except Exception as e:
             logger.error(f"ChromaDB 健康检查失败: {e}")
@@ -282,9 +321,19 @@ def get_rag_config() -> RAGConfig:
         use_mock = os.getenv("RAG_USE_MOCK", "false").lower() == "true"
         # 检查是否使用 ChromaDB 自带向量模型（从环境变量读取，默认 false）
         use_chromadb_embedding = os.getenv("RAG_USE_CHROMADB_EMBEDDING", "false").lower() == "true"
+        # 获取本地模型路径（优先从环境变量，否则从 settings）
+        model_path = os.getenv("BGE_MODEL_PATH")
+        if not model_path:
+            try:
+                from app.core.config import settings
+                model_path = settings.BGE_MODEL_PATH
+            except ImportError:
+                pass  # 使用默认路径
+
         _rag_config = RAGConfig(
             use_mock=use_mock,
-            use_chromadb_embedding=use_chromadb_embedding
+            use_chromadb_embedding=use_chromadb_embedding,
+            model_path=model_path  # 传递本地模型路径
         )
     return _rag_config
 

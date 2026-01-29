@@ -58,12 +58,15 @@ services:
       - CHROMADB_SERVER_AUTHN_CREDENTIALS_PROVIDER=noop
       - CHROMADB_SERVER_AUTHN_CREDENTIALS_NOOP__IDENTITY=noop
       - ANONYMIZED_TELEMETRY=False
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      # 禁用 Pulsar，避免健康检查问题
+      - PULSAR_ENABLED=false
+    # 移除健康检查，因为容器内没有 curl
+    # healthcheck:
+    #   test: ["CMD-SHELL", "python3 -c \"import requests; requests.get('http://localhost:8000/api/v1/heartbeat').raise_for_status()\""]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 5
+    #   start_period: 30s
 
   # 后端 API 服务
   backend:
