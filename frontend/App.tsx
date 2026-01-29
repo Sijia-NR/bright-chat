@@ -9,7 +9,8 @@ import ConfirmDialog from './components/ConfirmDialog';
 import { FavoriteModal } from './components/FavoriteModal';
 import { FavoriteButton } from './components/FavoriteButton';
 import MessageContent from './MessageContent';
-import { Message, ChatSession, User, LLMModel, Agent, AgentType, KnowledgeGroup, KnowledgeBase } from './types';
+import KnowledgeBaseDetail from './components/KnowledgeBaseDetail';
+import { Message, ChatSession, User, LLMModel, Agent, AgentAPI, AgentType, KnowledgeGroup, KnowledgeBase } from './types';
 import { chatService } from './services/chatService';
 import { authService } from './services/authService';
 import { sessionService } from './services/sessionService';
@@ -22,7 +23,7 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [view, setView] = useState<'chat' | 'admin'>('chat');
+  const [view, setView] = useState<'chat' | 'admin' | 'knowledge'>('chat');
   const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -36,11 +37,13 @@ const App: React.FC = () => {
   const modelsLoadedRef = useRef(false);
 
   // 新增状态：Agent 和知识库
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [agents, setAgents] = useState<AgentAPI[]>([]);  // AgentAPI 用于管理面板
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);  // Agent 用于聊天
   const [agentRefreshTrigger, setAgentRefreshTrigger] = useState(0);
-  const [knowledgeGroups, setKnowledgeGroups] = useState<KnowledgeGroup[]>([]);
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [isAgentLoading, setIsAgentLoading] = useState(false);  // Agent 加载状态
+  const [agentReady, setAgentReady] = useState(false);  // Agent 就绪状态
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);  // ✅ 只需要知识库列表
+  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null);  // ✅ 选中的知识库
 
   // 刷新模型列表的方法
   const refreshModels = useCallback(async () => {
@@ -130,15 +133,9 @@ const App: React.FC = () => {
     const loadKnowledge = async () => {
       if (!currentUser) return;
       try {
-        const groups = await knowledgeService.getGroups(currentUser.id);
-        setKnowledgeGroups(groups);
-
-        const allBases: KnowledgeBase[] = [];
-        for (const group of groups) {
-          const bases = await knowledgeService.getKnowledgeBases(group.id);
-          allBases.push(...bases);
-        }
-        setKnowledgeBases(allBases);
+        // ✅ 直接加载所有知识库，不需要分组
+        const bases = await knowledgeService.getKnowledgeBases();
+        setKnowledgeBases(bases);
       } catch (e) {
         console.error('Failed to load knowledge bases', e);
       }
@@ -150,15 +147,37 @@ const App: React.FC = () => {
     let currentSessionId = activeSessionId;
     let assistantMsgId: string | null = null;
 
+    // ✅ 检查 Agent 是否加载完成
+    if (selectedAgent && !agentReady) {
+      const errorMsg = 'Agent 正在加载，请稍候...';
+      setErrorMessage(errorMsg);
+      setTimeout(() => setErrorMessage(null), 2000);
+      return;
+    }
+
     // 清除之前的错误消息
     setErrorMessage(null);
 
+    // 如果没有会话，创建新会话（延迟创建会话策略）
     if (!currentSessionId && currentUser) {
-      const newSession = await sessionService.createSession(text, currentUser.id);
+      let sessionTitle = text;
+      let agentId = selectedAgent?.id;
+
+      // 如果是 Agent 对话，使用 Agent 名称作为标题
+      if (selectedAgent) {
+        sessionTitle = `${selectedAgent.displayName} 对话`;
+      }
+
+      const newSession = await sessionService.createSession(
+        sessionTitle,
+        currentUser.id,
+        agentId  // 传入 agentId 以区分 Agent 会话和普通会话
+      );
       currentSessionId = newSession.id;
       setActiveSessionId(currentSessionId);
       const updatedList = await sessionService.getSessions(currentUser.id);
       setSessions(updatedList);
+      console.log('[Session] 创建新会话:', { sessionTitle, agentId, sessionId: currentSessionId });
     }
 
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text, timestamp: Date.now() };
@@ -182,14 +201,49 @@ const App: React.FC = () => {
         });
 
         for await (const event of eventGenerator) {
-          if (event.type === 'stream' && event.content) {
-            fullContent += event.content;
-            setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+          console.log('[Chat] Agent 事件:', event);
+
+          // 处理后端实际发送的事件类型
+          if (event.type === 'start') {
+            console.log('[Chat] Agent 开始执行:', event.execution_id);
+          } else if (event.type === 'step') {
+            // 步骤事件：显示执行进度
+            const node = event.node || 'unknown';
+            const step = event.step || 0;
+            const state = event.state || {};
+
+            console.log('[Chat] Agent 步骤:', { node, step, state });
+
+            // 如果状态有输出，显示临时内容
+            if (state.output) {
+              fullContent = state.output;
+              setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+            }
+          } else if (event.type === 'tool_call') {
+            // 工具调用事件：显示工具执行结果
+            const tool = event.tool || 'unknown';
+            const result = event.result;
+
+            console.log('[Chat] Agent 工具调用:', { tool, result });
+
+            // 将工具结果显示在聊天中
+            if (result) {
+              const toolOutput = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+              fullContent += `\n\n🔧 工具 [${tool}] 执行结果:\n${toolOutput}`;
+              setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+            }
           } else if (event.type === 'complete' && event.output) {
+            // 完成事件：显示最终输出
             fullContent = event.output;
             setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+            console.log('[Chat] Agent 执行完成, 输出长度:', fullContent.length);
           } else if (event.type === 'error') {
-            throw new Error(event.error || 'Agent 执行出错');
+            // 错误事件
+            const errorMsg = event.error || 'Agent 执行出错';
+            fullContent = `❌ 错误: ${errorMsg}`;
+            setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+            console.error('[Chat] Agent 错误:', errorMsg);
+            throw new Error(errorMsg);
           }
         }
 
@@ -201,6 +255,7 @@ const App: React.FC = () => {
       }
 
       // 普通模型对话
+      console.log('[Chat] 使用普通模型对话模式, 模型:', selectedModelId);
       const response = await chatService.completions({
         model: selectedModelId,
         messages: [...messages, userMsg].map(m => ({ role: m.role as any, content: m.content })),
@@ -267,12 +322,71 @@ const App: React.FC = () => {
       // 确保 isTyping 状态总是被更新
       setIsTyping(false);
     }
-  }, [messages, activeSessionId, currentUser, selectedModelId]);
+  }, [messages, activeSessionId, currentUser, selectedModelId, selectedAgent, agentReady]);  // ✅ 添加 agentReady
 
   const onSelectSession = async (id: string) => {
+    console.log('[Session] onSelectSession 开始:', { sessionId: id, currentAgentsCount: agents.length });
     setView('chat');
     if (activeSessionId === id) return;
     setActiveSessionId(id);
+
+    // ✅ 开始加载 Agent 时设置状态
+    setIsAgentLoading(false);  // 先重置
+    setAgentReady(false);  // ✅ 标记为未就绪
+
+    // 查找会话以获取关联的 Agent
+    const session = sessions.find(s => s.id === id);
+    console.log('[Session] 找到的会话:', session);
+
+    if (session?.agentId) {
+      console.log('[Session] 会话关联的 Agent ID:', session.agentId);
+      setIsAgentLoading(true);  // ✅ 开始加载
+
+      // 先尝试从已加载的 agents 中查找
+      let agentApi = agents.find(a => a.id === session.agentId);
+
+      // 如果找不到，重新加载 agents 列表后再查找
+      if (!agentApi) {
+        console.warn('[Session] Agent 未在缓存中找到，重新加载...');
+        try {
+          const agentList = await agentService.getAgents();
+          setAgents(agentList);
+          agentApi = agentList.find(a => a.id === session.agentId);
+          console.log('[Session] 重新加载后找到的 Agent:', agentApi);
+        } catch (e) {
+          console.error('[Session] 加载 Agent 列表失败:', e);
+        }
+      }
+
+      if (agentApi) {
+        console.log('[Session] ✅ 恢复 Agent 会话:', agentApi.display_name || agentApi.name);
+        // 将 AgentAPI 转换为 Agent
+        const agent: Agent = {
+          id: agentApi.id,
+          name: agentApi.name,
+          displayName: agentApi.display_name || agentApi.name,
+          description: agentApi.description || '',
+          type: agentApi.agent_type as AgentType,
+          systemPrompt: agentApi.system_prompt || undefined,
+          isActive: agentApi.is_active,
+          createdAt: new Date(agentApi.created_at).getTime(),
+          order: 0
+        };
+        setSelectedAgent(agent);
+        setAgentReady(true);  // ✅ 标记为就绪
+      } else {
+        console.warn('[Session] ❌ Agent 未找到:', session.agentId);
+        setSelectedAgent(null);
+        setAgentReady(true);  // ✅ 即使失败也标记为就绪（允许普通对话）
+      }
+      setIsAgentLoading(false);  // ✅ 加载完成
+    } else {
+      // 普通会话，清除 Agent 状态
+      console.log('[Session] 普通会话，清除 Agent 状态');
+      setSelectedAgent(null);
+      setAgentReady(true);  // ✅ 普通会话不需要加载，直接就绪
+    }
+
     try {
       const history = await sessionService.getMessages(id);
       setMessages(history);
@@ -312,63 +426,79 @@ const App: React.FC = () => {
   const handleNewChat = () => {
     setActiveSessionId(null);
     setMessages([]);
-    setSavedMessageCount(0);  // 重置已保存消息计数
+    setSavedMessageCount(0);
+    setSelectedAgent(null);  // ✅ 清除智能体状态，进入模型服务对话模式
+    setAgentReady(true);  // ✅ 新对话不需要加载 Agent
+    setIsAgentLoading(false);
     setView('chat');
   };
 
-  // 处理 Agent 点击
-  const handleAgentClick = async (agent: Agent) => {
+  // 处理 Agent 点击（从 Sidebar 传递 AgentAPI）
+  const handleAgentClick = async (agentApi: AgentAPI) => {
+    // 将 AgentAPI 转换为 Agent（用于聊天）
+    const agent: Agent = {
+      id: agentApi.id,
+      name: agentApi.name,
+      displayName: agentApi.display_name || agentApi.name,
+      description: agentApi.description || '',
+      type: agentApi.agent_type as AgentType,
+      systemPrompt: agentApi.system_prompt || undefined,
+      isActive: agentApi.is_active,
+      createdAt: new Date(agentApi.created_at).getTime(),
+      order: 0
+    };
+
     setSelectedAgent(agent);
+    setAgentReady(true);  // ✅ 从侧边栏选择的 Agent 立即可用
+    setIsAgentLoading(false);
     setView('chat');
     setActiveSessionId(null);
     setMessages([]);
     setSavedMessageCount(0);
-
-    if (currentUser) {
-      const newSession = await sessionService.createSession(
-        `${agent.displayName} 对话`,
-        currentUser.id,
-        agent.id
-      );
-      setActiveSessionId(newSession.id);
-      const updatedList = await sessionService.getSessions(currentUser.id);
-      setSessions(updatedList);
-    }
+    // ✅ 不立即创建会话，等发送第一条消息时再创建
   };
 
   // 处理知识库刷新
   const refreshKnowledge = async () => {
     if (!currentUser) return;
     try {
-      const groups = await knowledgeService.getGroups(currentUser.id);
-      setKnowledgeGroups(groups);
-
-      const allBases: KnowledgeBase[] = [];
-      for (const group of groups) {
-        const bases = await knowledgeService.getKnowledgeBases(group.id);
-        allBases.push(...bases);
-      }
-      setKnowledgeBases(allBases);
+      // ✅ 直接加载所有知识库
+      const bases = await knowledgeService.getKnowledgeBases();
+      setKnowledgeBases(bases);
     } catch (e) {
       console.error('Failed to refresh knowledge', e);
     }
   };
 
-  // 处理知识库分组操作
-  const handleCreateKnowledgeGroup = async (name: string, description?: string) => {
+  // ✅ 处理创建知识库
+  const handleCreateKnowledgeBase = async () => {
     if (!currentUser) return;
-    await knowledgeService.createGroup(currentUser.id, name, description);
-    await refreshKnowledge();
+    try {
+      // 弹出输入框
+      const name = prompt('请输入知识库名称:');
+      if (!name || !name.trim()) return;
+
+      const description = prompt('请输入知识库描述（可选）:');
+
+      // ✅ 调用创建接口（不需要 group_id）
+      await knowledgeService.createKnowledgeBase({
+        name: name.trim(),
+        description: description?.trim() || '',
+        user_id: currentUser.id
+      });
+
+      // 刷新列表
+      await refreshKnowledge();
+      alert('知识库创建成功！');
+    } catch (e: any) {
+      alert('创建知识库失败: ' + e.message);
+    }
   };
 
-  const handleUpdateKnowledgeGroup = async (id: string, name: string, description?: string) => {
-    await knowledgeService.updateGroup(id, name, description);
-    await refreshKnowledge();
-  };
-
-  const handleDeleteKnowledgeGroup = async (id: string) => {
-    await knowledgeService.deleteGroup(id);
-    await refreshKnowledge();
+  // ✅ 处理选择知识库 - 切换到知识库页面视图
+  const handleSelectKnowledgeBase = (baseId: string) => {
+    setSelectedKnowledgeBaseId(baseId);
+    setView('knowledge');  // 切换到知识库页面视图
   };
 
   if (!currentUser) return <Login onLoginSuccess={onLogin} />;
@@ -388,12 +518,10 @@ const App: React.FC = () => {
         agents={agents}
         selectedAgent={selectedAgent}
         onAgentClick={handleAgentClick}
-        knowledgeGroups={knowledgeGroups}
         knowledgeBases={knowledgeBases}
         onKnowledgeRefresh={refreshKnowledge}
-        onCreateKnowledgeGroup={handleCreateKnowledgeGroup}
-        onUpdateKnowledgeGroup={handleUpdateKnowledgeGroup}
-        onDeleteKnowledgeGroup={handleDeleteKnowledgeGroup}
+        onCreateKnowledgeBase={handleCreateKnowledgeBase}
+        onSelectKnowledgeBase={handleSelectKnowledgeBase}
       />
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white md:bg-[#F7F7F8]">
         {view === 'admin' ? (
@@ -402,6 +530,17 @@ const App: React.FC = () => {
             onBack={() => setView('chat')}
             onModelsChange={refreshModels}
             onAgentChange={() => setAgentRefreshTrigger(prev => prev + 1)}
+          />
+        ) : view === 'knowledge' ? (
+          <KnowledgeBaseDetail
+            baseId={selectedKnowledgeBaseId || ''}
+            onClose={() => {
+              setSelectedKnowledgeBaseId(null);
+              setView('chat');  // 返回聊天视图
+            }}
+            onSuccess={() => {
+              refreshKnowledge();
+            }}
           />
         ) : (
           <>
@@ -413,12 +552,25 @@ const App: React.FC = () => {
               }))}
               selectedModelId={selectedModelId ?? ''}
               onModelChange={setSelectedModelId}
+              selectedAgent={selectedAgent}
             />
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-0">
               <div className="max-w-3xl mx-auto py-10 min-h-full flex flex-col">
                 {messages.length === 0 ? (
                   <>
-                    {models.length === 0 ? (
+                    {/* Agent 对话的空状态 */}
+                    {selectedAgent ? (
+                      <div className="flex-1 flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-1000">
+                        <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[32px] mb-8 shadow-2xl flex items-center justify-center">
+                          <span className="text-4xl font-black text-white italic">{selectedAgent.displayName.substring(0, 2)}</span>
+                        </div>
+                        <h1 className="text-3xl font-bold text-gray-900 mb-2">{selectedAgent.displayName}</h1>
+                        <p className="text-gray-400 font-medium mb-4">{selectedAgent.description}</p>
+                        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-full text-sm font-medium">
+                          <span>数字员工已就绪</span>
+                        </div>
+                      </div>
+                    ) : models.length === 0 ? (
                       <div className="flex-1 flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-1000">
                         <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
                           <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -441,8 +593,8 @@ const App: React.FC = () => {
                         <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[32px] mb-8 shadow-2xl flex items-center justify-center">
                           <span className="text-4xl font-black text-white italic">AI</span>
                         </div>
-                        <h1 className="text-3xl font-bold text-gray-900 mb-2">AI工作台</h1>
-                        <p className="text-gray-400 font-medium">智能协作 · 高效办公</p>
+                        <h1 className="text-3xl font-bold text-gray-900 mb-2">新对话</h1>
+                        <p className="text-gray-400 font-medium">选择模型开始对话</p>
                       </div>
                     )}
                   </>
@@ -493,7 +645,10 @@ const App: React.FC = () => {
                 )}
               </div>
             </div>
-            <ChatInput onSend={handleSendMessage} disabled={isTyping || models.length === 0 || !selectedModelId} />
+            <ChatInput
+              onSend={handleSendMessage}
+              disabled={isTyping || isAgentLoading || (selectedAgent ? false : (models.length === 0 || !selectedModelId))}
+            />
           </>
         )}
       </main>

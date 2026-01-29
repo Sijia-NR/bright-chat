@@ -1,6 +1,6 @@
 import React from 'react';
-import { Clock, MessageSquare, Trash2 } from 'lucide-react';
-import { ChatSession, AgentType } from '../../types';
+import { Clock, MessageSquare, Trash2, Bot } from 'lucide-react';
+import { ChatSession, AgentAPI } from '../../types';
 
 interface SessionTrailSectionProps {
   sessions: ChatSession[];
@@ -9,13 +9,8 @@ interface SessionTrailSectionProps {
   onToggle: () => void;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
+  agents: AgentAPI[];  // 新增：接收 Agent 列表
 }
-
-const AGENT_TYPE_LABELS: Record<AgentType, { text: string; color: string }> = {
-  [AgentType.TEAM_LEADER]: { text: '数字组长', color: 'bg-purple-100 text-purple-700' },
-  [AgentType.DATA_ANALYST]: { text: '问数员工', color: 'bg-blue-100 text-blue-700' },
-  [AgentType.WRITING_ASSISTANT]: { text: '写作助手', color: 'bg-green-100 text-green-700' }
-};
 
 const SessionTrailSection: React.FC<SessionTrailSectionProps> = ({
   sessions,
@@ -23,7 +18,8 @@ const SessionTrailSection: React.FC<SessionTrailSectionProps> = ({
   isExpanded,
   onToggle,
   onSelectSession,
-  onDeleteSession
+  onDeleteSession,
+  agents  // 接收 agents
 }) => {
   return (
     <div className="flex-1 overflow-y-auto px-3 space-y-1 py-2 custom-scrollbar border-b border-gray-50">
@@ -48,7 +44,8 @@ const SessionTrailSection: React.FC<SessionTrailSectionProps> = ({
             </div>
           ) : (
             sessions.map((session: ChatSession) => {
-              const agentLabel = session.agentType ? AGENT_TYPE_LABELS[session.agentType] : null;
+              // 根据 agentId 查找对应的 Agent
+              const agent = session.agentId ? agents.find(a => a.id === session.agentId) : null;
 
               return (
                 <div
@@ -61,12 +58,19 @@ const SessionTrailSection: React.FC<SessionTrailSectionProps> = ({
                   <div className={`flex-1 px-4 py-3 flex items-center gap-3 text-sm truncate ${
                     activeSessionId === session.id ? 'text-blue-600 font-bold' : 'text-gray-600'
                   }`}>
-                    <MessageSquare size={16} className={activeSessionId === session.id ? 'text-blue-500' : 'text-gray-400'} />
-                    <span className="truncate pr-6">{session.title}</span>
+                    {/* Agent 会话显示机器人图标，普通会话显示消息图标 */}
+                    {agent ? (
+                      <Bot size={16} className={activeSessionId === session.id ? 'text-blue-500' : 'text-gray-400'} />
+                    ) : (
+                      <MessageSquare size={16} className={activeSessionId === session.id ? 'text-blue-500' : 'text-gray-400'} />
+                    )}
 
-                    {agentLabel && (
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${agentLabel.color}`}>
-                        {agentLabel.text}
+                    <span className="truncate flex-1">{session.title}</span>
+
+                    {/* Agent 标签 */}
+                    {agent && (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 bg-blue-100 text-blue-600`}>
+                        {agent.display_name || agent.name}
                       </span>
                     )}
                   </div>

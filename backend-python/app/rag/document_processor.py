@@ -35,7 +35,7 @@ from langchain_community.document_loaders import (
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangDocument
 
-from .config import RAGConfig, SUPPORTED_FILE_TYPES, KNOWLEDGE_COLLECTION
+from .config import RAGConfig, SUPPORTED_FILE_TYPES, KNOWLEDGE_COLLECTION, ALLOWED_FILE_EXTENSIONS, MAGIC_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,57 @@ class DocumentProcessor:
             if ext in extensions:
                 return file_type
         return None
+
+    def validate_file_security(self, filename: str, file_path: str) -> bool:
+        """
+        验证文件安全性：扩展名白名单 + 魔术字节检查
+
+        Args:
+            filename: 文件名
+            file_path: 文件路径
+
+        Returns:
+            True if valid, raises ValueError if invalid
+
+        Raises:
+            ValueError: 文件类型不合法或文件内容不匹配
+        """
+        # 1. 检查文件扩展名
+        ext = Path(filename).suffix.lower()
+        if ext not in ALLOWED_FILE_EXTENSIONS:
+            raise ValueError(
+                f"不支持的文件扩展名: {ext}. "
+                f"支持的扩展名: {', '.join(sorted(ALLOWED_FILE_EXTENSIONS))}"
+            )
+
+        # 2. 检查魔术字节（对于有魔术字节定义的格式）
+        if ext in MAGIC_BYTES:
+            try:
+                with open(file_path, 'rb') as f:
+                    file_header = f.read(8)  # 读取前8个字节
+                    expected_magic = MAGIC_BYTES[ext]
+
+                    # 检查文件头是否以预期的魔术字节开头
+                    if not file_header.startswith(expected_magic):
+                        logger.warning(
+                            f"文件内容与扩展名不匹配: {filename} "
+                            f"(expected {ext.replace('.', '').upper()} format)"
+                        )
+                        raise ValueError(
+                            f"文件内容与扩展名不匹配: {filename}. "
+                            f"文件可能已损坏或扩展名错误。"
+                        )
+
+                    logger.debug(f"✅ 文件魔术字节验证通过: {filename}")
+            except FileNotFoundError:
+                logger.error(f"文件不存在: {file_path}")
+                raise ValueError(f"文件不存在: {file_path}")
+            except IOError as e:
+                logger.error(f"读取文件失败: {file_path}, {e}")
+                raise ValueError(f"读取文件失败: {e}")
+
+        # 3. 纯文本文件不需要魔术字节检查
+        return True
 
     async def load_document(self, file_path: str, file_type: str) -> List[LangDocument]:
         """
@@ -291,6 +342,9 @@ class DocumentProcessor:
 
     async def _validate_and_load_document(self, filename: str, file_path: str) -> tuple:
         """验证文件类型并加载文档"""
+        # ✅ 统一安全验证：扩展名 + 魔术字节
+        self.validate_file_security(filename, file_path)
+
         file_type = self.get_file_type(filename)
         if not file_type:
             raise ValueError(f"不支持的文件类型: {filename}")

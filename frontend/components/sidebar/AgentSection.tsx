@@ -1,12 +1,12 @@
 import React from 'react';
 import { ChevronDown, ChevronUp, Crown, BarChart3, PenTool } from 'lucide-react';
-import { Agent, AgentType } from '../../types';
+import { Agent, AgentAPI, AgentType } from '../../types';
 
 interface AgentSectionProps {
-  agents: Agent[];
+  agents: AgentAPI[];  // 修改为 AgentAPI
   isExpanded: boolean;
   onToggle: () => void;
-  onAgentClick: (agent: Agent) => void;
+  onAgentClick: (agent: AgentAPI) => void;  // 修改为接收 AgentAPI
 }
 
 const AGENT_ICONS: Record<AgentType, typeof Crown> = {
@@ -41,9 +41,9 @@ const AgentSection: React.FC<AgentSectionProps> = ({
 
       {isExpanded && (
         <div className="px-3 pb-3 space-y-1">
-          {agents.map((agent: Agent) => {
-            const IconComponent = AGENT_ICONS[agent.type];
-            const colorClass = AGENT_COLORS[agent.type];
+          {agents.map((agent: AgentAPI) => {
+            const IconComponent = AGENT_ICONS[agent.agent_type as AgentType];
+            const colorClass = AGENT_COLORS[agent.agent_type as AgentType];
 
             return (
               <button
@@ -52,7 +52,7 @@ const AgentSection: React.FC<AgentSectionProps> = ({
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium ${colorClass}`}
               >
                 {IconComponent && <IconComponent size={18} />}
-                <span>{agent.displayName}</span>
+                <span>{agent.display_name || agent.name}</span>
               </button>
             );
           })}

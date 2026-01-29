@@ -7,6 +7,8 @@ Configure ChromaDB client and BGE Embedding model
 """
 import os
 import sys
+import threading
+import time
 from typing import Optional
 import chromadb
 from chromadb.config import Settings
@@ -53,26 +55,38 @@ class RAGConfig:
         self.chromadb_host = chromadb_host or os.getenv("CHROMADB_HOST", "chromadb")
         self.chromadb_port = chromadb_port or int(os.getenv("CHROMADB_PORT", "8000"))
 
-        # 连接到 ChromaDB 容器（强制使用 HttpClient）
-        try:
-            # 设置环境变量禁用 telemetry
-            os.environ["ANONYMIZED_TELEMETRY"] = "False"
+        # 连接到 ChromaDB 容器（强制使用 HttpClient，带重试机制）
+        max_retries = 3
+        retry_delay = 2
 
-            self.chroma_client = chromadb.HttpClient(
-                host=self.chromadb_host,
-                port=self.chromadb_port,
-                settings=Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True
+        # 设置环境变量禁用 telemetry
+        os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
+        for attempt in range(max_retries):
+            try:
+                self.chroma_client = chromadb.HttpClient(
+                    host=self.chromadb_host,
+                    port=self.chromadb_port,
+                    settings=Settings(
+                        anonymized_telemetry=False,
+                        allow_reset=True
+                    )
                 )
-            )
-            # 测试连接
-            self.chroma_client.heartbeat()
-            logger.info(f"ChromaDB: 已连接到容器 {self.chromadb_host}:{self.chromadb_port}")
-        except Exception as e:
-            logger.error(f"无法连接到 ChromaDB 容器 ({self.chromadb_host}:{self.chromadb_port}): {e}")
-            logger.error("请确保 ChromaDB 容器已启动: docker-compose up -d chromadb")
-            raise
+                # 测试连接
+                self.chroma_client.heartbeat()
+                logger.info(f"✅ ChromaDB 连接成功: {self.chromadb_host}:{self.chromadb_port}")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ ChromaDB 连接失败（尝试 {attempt + 1}/{max_retries}），{retry_delay}秒后重试...")
+                    logger.debug(f"错误详情: {e}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+                else:
+                    logger.error(f"❌ ChromaDB 连接失败（已达最大重试次数 {max_retries}）")
+                    logger.error(f"最后错误: {e}")
+                    logger.error("请确保 ChromaDB 容器已启动: docker-compose up -d chromadb")
+                    raise
 
         # Embedding 模型配置
         self.embedding_model_name = embedding_model_name
@@ -81,6 +95,7 @@ class RAGConfig:
         self.model_path = model_path or os.getenv("BGE_MODEL_PATH")  # 优先使用环境变量
         self.use_chromadb_embedding = use_chromadb_embedding or os.getenv("RAG_USE_CHROMADB_EMBEDDING", "false").lower() == "true"  # 优先使用 ChromaDB 自带模型
         self._embedding_model = None
+        self._model_lock = threading.Lock()  # 线程锁，保护模型懒加载
 
         # 默认检索配置
         self.default_top_k = 5
@@ -88,52 +103,59 @@ class RAGConfig:
 
     @property
     def embedding_model(self) -> SentenceTransformer:
-        """获取 Embedding 模型（懒加载）"""
+        """
+        获取 Embedding 模型（线程安全的懒加载）
+
+        使用双重检查锁（Double-Checked Locking）确保线程安全
+        """
         if self._embedding_model is None:
-            # 检查是否使用Mock模式（用于测试或离线环境）
-            if self.use_mock or os.getenv("RAG_USE_MOCK", "false").lower() == "true":
-                logger.info(f"使用 Mock Embedding 模型 (测试/离线模式)")
-                try:
-                    from tests.mocks import MockEmbeddingModel
-                    self._embedding_model = MockEmbeddingModel()
-                except ImportError:
-                    # 如果tests不可用，创建内联的Mock模型
-                    logger.warning("tests.mocks 不可用，使用内联Mock模型")
-                    import numpy as np
-                    class _MockEmbeddingModel:
-                        def __init__(self):
-                            self.dimension = 1024
-                            self.call_count = 0
-                        def encode(self, texts):
-                            self.call_count += 1
-                            # 使用确定性伪随机向量
-                            embeddings = []
-                            for text in texts:
-                                text_hash = hash(text) % (2**31)
-                                np.random.seed(text_hash)
-                                vector = np.random.rand(1024)
-                                vector = vector / np.linalg.norm(vector)
-                                embeddings.append(vector.tolist())
-                            return embeddings
-                        def get_sentence_embedding_dimension(self):
-                            return self.dimension
-                    self._embedding_model = _MockEmbeddingModel()
-            else:
-                # 检查是否有本地模型路径
-                if self.model_path and os.path.exists(self.model_path):
-                    logger.info(f"从本地路径加载 Embedding 模型: {self.model_path} (设备: {self.device})")
-                    self._embedding_model = SentenceTransformer(
-                        self.model_path,
-                        device=self.device
-                    )
-                    logger.info(f"本地 Embedding 模型加载成功 (维度: {self._embedding_model.get_sentence_embedding_dimension()})")
-                else:
-                    logger.info(f"加载在线 Embedding 模型: {self.embedding_model_name} (设备: {self.device})")
-                    self._embedding_model = SentenceTransformer(
-                        self.embedding_model_name,
-                        device=self.device
-                    )
-                    logger.info(f"Embedding 模型加载成功 (维度: {self._embedding_model.get_sentence_embedding_dimension()})")
+            with self._model_lock:  # 加锁
+                # 双重检查：其他线程可能已经初始化了
+                if self._embedding_model is None:
+                    # 检查是否使用Mock模式（用于测试或离线环境）
+                    if self.use_mock or os.getenv("RAG_USE_MOCK", "false").lower() == "true":
+                        logger.info(f"使用 Mock Embedding 模型 (测试/离线模式)")
+                        try:
+                            from tests.mocks import MockEmbeddingModel
+                            self._embedding_model = MockEmbeddingModel()
+                        except ImportError:
+                            # 如果tests不可用，创建内联的Mock模型
+                            logger.warning("tests.mocks 不可用，使用内联Mock模型")
+                            import numpy as np
+                            class _MockEmbeddingModel:
+                                def __init__(self):
+                                    self.dimension = 1024
+                                    self.call_count = 0
+                                def encode(self, texts):
+                                    self.call_count += 1
+                                    # 使用确定性伪随机向量
+                                    embeddings = []
+                                    for text in texts:
+                                        text_hash = hash(text) % (2**31)
+                                        np.random.seed(text_hash)
+                                        vector = np.random.rand(1024)
+                                        vector = vector / np.linalg.norm(vector)
+                                        embeddings.append(vector.tolist())
+                                    return embeddings
+                                def get_sentence_embedding_dimension(self):
+                                    return self.dimension
+                            self._embedding_model = _MockEmbeddingModel()
+                    else:
+                        # 检查是否有本地模型路径
+                        if self.model_path and os.path.exists(self.model_path):
+                            logger.info(f"从本地路径加载 Embedding 模型: {self.model_path} (设备: {self.device})")
+                            self._embedding_model = SentenceTransformer(
+                                self.model_path,
+                                device=self.device
+                            )
+                            logger.info(f"本地 Embedding 模型加载成功 (维度: {self._embedding_model.get_sentence_embedding_dimension()})")
+                        else:
+                            logger.info(f"加载在线 Embedding 模型: {self.embedding_model_name} (设备: {self.device})")
+                            self._embedding_model = SentenceTransformer(
+                                self.embedding_model_name,
+                                device=self.device
+                            )
+                            logger.info(f"Embedding 模型加载成功 (维度: {self._embedding_model.get_sentence_embedding_dimension()})")
         return self._embedding_model
 
     def get_or_create_collection(self, name: str, metadata: Optional[dict] = None, use_embedding: bool = True):
@@ -284,6 +306,22 @@ SUPPORTED_FILE_TYPES = {
     "html": [".html", ".htm"],
     "excel": [".xls", ".xlsx"],
     "powerpoint": [".ppt", ".pptx"],
+}
+
+# 统一的文件扩展名白名单（用于安全验证）
+ALLOWED_FILE_EXTENSIONS = set()
+for extensions in SUPPORTED_FILE_TYPES.values():
+    ALLOWED_FILE_EXTENSIONS.update(extensions)
+
+# 文件魔术字节（用于深度验证）
+MAGIC_BYTES = {
+    ".pdf": b"%PDF",
+    ".doc": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    ".docx": b"PK\x03\x04",  # ZIP format
+    ".xls": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    ".xlsx": b"PK\x03\x04",  # ZIP format
+    ".ppt": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    ".pptx": b"PK\x03\x04",  # ZIP format
 }
 
 # Embedding 模型列表

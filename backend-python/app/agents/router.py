@@ -5,6 +5,7 @@ Agent API Router
 提供 Agent 管理、Agent 聊天等 API 端点
 Provides API endpoints for Agent management and Agent chat
 """
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..core.database import get_db
+from ..core.database import get_db, get_db_session
 from ..core.security import get_current_user_id
 from ..models.user import User
 from ..models.agent import (
@@ -113,6 +114,7 @@ async def create_agent(
         raise
     except Exception as e:
         logger.error(f"创建 Agent 失败: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -244,6 +246,7 @@ async def update_agent(
         raise
     except Exception as e:
         logger.error(f"更新 Agent 失败: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -270,6 +273,7 @@ async def delete_agent(
         raise
     except Exception as e:
         logger.error(f"删除 Agent 失败: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -278,11 +282,14 @@ async def delete_agent(
 @router.post("/{agent_id}/chat")
 async def agent_chat(
     agent_id: str,
-    request: AgentChatRequest,
+    request_obj: AgentChatRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Agent 聊天（流式输出）"""
+    execution = None
+    execution_id = None
+
     try:
         # 获取 Agent
         agent = db.query(Agent).filter(
@@ -295,8 +302,8 @@ async def agent_chat(
         logger.info("=" * 80)
         logger.info(f"[Agent 聊天开始] Agent: {agent.display_name} ({agent.id})")
         logger.info(f"[Agent 聊天开始] 用户: {current_user.username} ({current_user.id})")
-        logger.info(f"[Agent 聊天开始] 会话ID: {request.session_id}")
-        logger.info(f"[Agent 聊天开始] 查询: {request.query}")
+        logger.info(f"[Agent 聊天开始] 会话ID: {request_obj.session_id}")
+        logger.info(f"[Agent 聊天开始] 查询: {request_obj.query}")
         logger.info(f"[Agent 聊天开始] Agent类型: {agent.agent_type}")
         logger.info(f"[Agent 聊天开始] 可用工具: {agent.tools or []}")
         logger.info(f"[Agent 聊天开始] 知识库: {agent.knowledge_base_ids or []}")
@@ -305,19 +312,47 @@ async def agent_chat(
         # 获取 Agent 服务
         agent_service = get_agent_service()
 
+        # ✅ 创建执行记录（用于跟踪中断）
+        from ..models.agent import AgentExecution, EXECUTION_STATUS_RUNNING
+        import uuid
+
+        execution_id = str(uuid.uuid4())
+        execution = AgentExecution(
+            id=execution_id,
+            agent_id=agent_id,
+            user_id=current_user.id,
+            session_id=request_obj.session_id,
+            input_prompt=request_obj.query,
+            status=EXECUTION_STATUS_RUNNING
+        )
+        db.add(execution)
+        db.commit()
+        logger.info(f"✅ [数据库] 执行记录已创建: {execution_id}")
+
+        # ✅ 获取原始 request 对象以检测断开连接
+        from starlette.requests import Request
+        request_obj_scope = request_obj
+
         # 流式输出
         async def generate():
+            nonlocal execution, execution_id
+            client_disconnected = False
+
             try:
                 step_count = 0
                 start_time = datetime.now()
 
                 async for event in agent_service.execute(
                     agent=agent,
-                    query=request.query,
+                    query=request_obj.query,
                     user_id=current_user.id,
-                    session_id=request.session_id
+                    session_id=request_obj.session_id
                 ):
                     event_type = event.get("type")
+
+                    # ✅ 检查客户端是否断开连接
+                    # 注意：这里无法直接访问 request 对象，需要通过其他方式
+                    # 我们将在 agent_service.execute 内部处理
 
                     # 记录每个事件
                     if event_type == "start":
@@ -358,20 +393,67 @@ async def agent_chat(
                         logger.info(f"✅ [Agent 执行完成] 最终输出: {output[:200]}...")
                         logger.info("=" * 80)
 
+                        # ✅ 更新执行记录为完成状态
+                        execution.status = "completed"
+                        execution.steps = steps
+                        execution.result = output
+                        execution.completed_at = datetime.now()
+                        db.commit()
+                        logger.info(f"✅ [数据库] 执行记录已更新为完成状态")
+
                     elif event_type == "error":
                         logger.error("=" * 80)
                         logger.error(f"❌ [Agent 执行错误] 错误: {event.get('error')}")
                         logger.error("=" * 80)
 
+                        # ✅ 更新执行记录为失败状态
+                        execution.status = "failed"
+                        execution.error_message = event.get('error', 'Unknown error')
+                        execution.completed_at = datetime.now()
+                        db.commit()
+                        logger.info(f"✅ [数据库] 执行记录已更新为失败状态")
+
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
                 yield "data: [DONE]\n\n"
+
+            except asyncio.CancelledError:
+                # ✅ 客户端断开连接，回滚状态
+                logger.warning("=" * 80)
+                logger.warning(f"⚠️  [客户端断开] execution_id={execution_id}")
+                logger.warning(f"⚠️  [客户端断开] Agent: {agent.display_name}")
+                logger.warning(f"⚠️  [客户端断开] 查询: {request_obj.query}")
+                logger.warning("=" * 80)
+
+                # 回滚执行记录状态
+                if execution:
+                    execution.status = "failed"
+                    execution.error_message = "客户端断开连接（流传输中断）"
+                    execution.completed_at = datetime.now()
+                    db.commit()
+                    logger.info(f"✅ [数据库] 执行记录已更新为失败状态（客户端断开）")
+
+                # 发送断开事件
+                disconnect_event = {
+                    "type": "error",
+                    "error": "连接已断开"
+                }
+                yield f"data: {json.dumps(disconnect_event, ensure_ascii=False)}\n\n"
+                raise
 
             except Exception as e:
                 logger.error("=" * 80)
                 logger.error(f"❌ [Agent 执行异常] 错误类型: {type(e).__name__}")
                 logger.error(f"❌ [Agent 执行异常] 错误信息: {str(e)}")
                 logger.error("=" * 80)
+
+                # ✅ 更新执行记录为失败状态
+                if execution:
+                    execution.status = "failed"
+                    execution.error_message = str(e)
+                    execution.completed_at = datetime.now()
+                    db.commit()
+                    logger.info(f"✅ [数据库] 执行记录已更新为失败状态")
 
                 error_event = {
                     "type": "error",
@@ -382,12 +464,33 @@ async def agent_chat(
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     except HTTPException:
+        # ✅ HTTP 错误时也要更新执行记录
+        if execution and execution_id:
+            try:
+                execution.status = "failed"
+                execution.error_message = "HTTP 异常"
+                execution.completed_at = datetime.now()
+                db.commit()
+            except:
+                pass
         raise
+
     except Exception as e:
         logger.error("=" * 80)
         logger.error(f"❌ [Agent 聊天失败] AgentID: {agent_id}")
         logger.error(f"❌ [Agent 聊天失败] 错误: {e}")
         logger.error("=" * 80)
+
+        # ✅ 更新执行记录为失败状态
+        if execution and execution_id:
+            try:
+                execution.status = "failed"
+                execution.error_message = str(e)
+                execution.completed_at = datetime.now()
+                db.commit()
+            except:
+                pass
+
         raise HTTPException(status_code=500, detail=str(e))
 
 

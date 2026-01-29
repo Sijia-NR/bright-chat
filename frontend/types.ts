@@ -170,14 +170,17 @@ export interface KnowledgeGroup {
 // 知识库项
 export interface KnowledgeBase {
   id: string;
-  groupId: string;               // 所属分组
+  groupId: string | null;        // 所属分组（允许为空）
   name: string;
   description?: string;
-  type: 'file' | 'url' | 'text';
+  type?: 'file' | 'url' | 'text';
   size?: number;                 // 文件大小（字节）
   url?: string;
   createdAt: number;
-  updatedAt: number;
+  updatedAt?: number;
+  embeddingModel?: string;
+  chunkSize?: number;
+  chunkOverlap?: number;
 }
 
 // 后端响应类型 - Agent
@@ -207,14 +210,16 @@ export interface KnowledgeGroupResponse {
 // 后端响应类型 - 知识库项
 export interface KnowledgeBaseResponse {
   id: string;
-  group_id: string;
+  group_id: string | null;
+  user_id: string;
   name: string;
   description: string | null;
-  type: string;
-  size: number | null;
-  url: string | null;
+  embedding_model: string;
+  chunk_size: number;
+  chunk_overlap: number;
   created_at: string;
   updated_at: string;
+  document_count?: number;
 }
 
 // ==================== Agent 相关类型 ====================

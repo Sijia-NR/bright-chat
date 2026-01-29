@@ -5,34 +5,86 @@
  * 提供知识库和文档的管理功能
  * Provides knowledge base and document management features
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FolderOpen, FileText, Trash2, Plus, Upload } from 'lucide-react';
 import { knowledgeService } from '../services/knowledgeService';
 import { KnowledgeGroupAPI, KnowledgeBaseAPI, DocumentAPI } from '../types';
 
 interface KnowledgePanelProps {
   onClose?: () => void;
+  userId?: string;  // 添加 userId 参数
 }
 
-export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
+export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
   const [groups, setGroups] = useState<KnowledgeGroupAPI[]>([]);
   const [bases, setBases] = useState<KnowledgeBaseAPI[]>([]);
   const [selectedBase, setSelectedBase] = useState<KnowledgeBaseAPI | null>(null);
   const [documents, setDocuments] = useState<DocumentAPI[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [processingDocs, setProcessingDocs] = useState<Set<string>>(new Set());
+  const pollingIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   // 加载知识库分组和列表
   useEffect(() => {
     loadData();
   }, []);
 
+  // 清理轮询定时器
+  useEffect(() => {
+    return () => {
+      // 组件卸载时清理所有轮询
+      pollingIntervalsRef.current.forEach((interval) => clearInterval(interval));
+      pollingIntervalsRef.current.clear();
+    };
+  }, []);
+
+  // 启动文档状态轮询
+  const startPollingDocumentStatus = (kbId: string) => {
+    // 如果已有该知识库的轮询，先清除
+    const existingInterval = pollingIntervalsRef.current.get(kbId);
+    if (existingInterval) {
+      clearInterval(existingInterval);
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const docs = await knowledgeService.getDocuments(kbId);
+        const processing = docs.filter((d: DocumentAPI) => d.upload_status === 'processing');
+
+        if (processing.length === 0) {
+          // 所有文档处理完成，停止轮询
+          clearInterval(interval);
+          pollingIntervalsRef.current.delete(kbId);
+          setProcessingDocs(new Set());
+          // 重新加载文档列表以显示最新状态
+          if (selectedBase?.id === kbId) {
+            loadDocuments(selectedBase);
+          }
+        } else {
+          // 更新处理中的文档集合
+          setProcessingDocs(new Set(processing.map((d: DocumentAPI) => d.id)));
+        }
+      } catch (err) {
+        console.error('轮询文档状态失败:', err);
+        // 轮询失败时不停止，继续尝试
+      }
+    }, 3000); // 每3秒轮询一次
+
+    pollingIntervalsRef.current.set(kbId, interval);
+  };
+
   const loadData = async () => {
+    if (!userId) {
+      setError('用户未登录');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const [groupsData, basesData] = await Promise.all([
-        knowledgeService.getGroups(),
+        knowledgeService.getGroups(userId),
         knowledgeService.getKnowledgeBases(),
       ]);
       setGroups(groupsData);
@@ -51,6 +103,13 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
     try {
       const docs = await knowledgeService.getDocuments(kb.id);
       setDocuments(docs);
+
+      // 检查是否有处理中的文档，如果有则启动轮询
+      const processing = docs.filter((d: DocumentAPI) => d.upload_status === 'processing');
+      if (processing.length > 0) {
+        setProcessingDocs(new Set(processing.map((d: DocumentAPI) => d.id)));
+        startPollingDocumentStatus(kb.id);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -60,11 +119,16 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
 
   // 创建知识库分组
   const handleCreateGroup = async () => {
+    if (!userId) {
+      alert('用户未登录');
+      return;
+    }
+
     const name = prompt('请输入分组名称:');
     if (!name) return;
 
     try {
-      await knowledgeService.createGroup(name);
+      await knowledgeService.createGroup(userId, name);
       loadData();
     } catch (err: any) {
       alert('创建分组失败: ' + err.message);
@@ -99,6 +163,11 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
       try {
         await knowledgeService.uploadDocument(kb.id, file);
         alert('文档上传成功，正在后台处理...');
+
+        // 启动状态轮询
+        startPollingDocumentStatus(kb.id);
+
+        // 立即刷新一次文档列表
         if (selectedBase?.id === kb.id) {
           loadDocuments(kb);
         }
@@ -246,29 +315,40 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
               </div>
             ) : (
               <div className="space-y-2">
-                {documents.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center justify-between p-3 bg-white border rounded"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <FileText size={16} className="text-gray-400" />
-                        <span className="font-medium">{doc.filename}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        状态: {doc.upload_status} | 块数: {doc.chunk_count}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteDocument(doc)}
-                      className="p-1 hover:bg-red-100 text-red-600 rounded"
-                      title="删除文档"
+                {documents.map((doc) => {
+                  const isProcessing = processingDocs.has(doc.id);
+                  return (
+                    <div
+                      key={doc.id}
+                      className={`flex items-center justify-between p-3 bg-white border rounded ${isProcessing ? 'border-blue-300 bg-blue-50' : ''}`}
                     >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <FileText size={16} className="text-gray-400" />
+                          <span className="font-medium">{doc.filename}</span>
+                          {isProcessing && (
+                            <span className="text-xs text-blue-600 animate-pulse">
+                              处理中...
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          状态: {doc.upload_status} | 块数: {doc.chunk_count}
+                          {doc.error_message && (
+                            <span className="text-red-600 ml-2">错误: {doc.error_message}</span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteDocument(doc)}
+                        className="p-1 hover:bg-red-100 text-red-600 rounded"
+                        title="删除文档"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>

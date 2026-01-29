@@ -271,20 +271,45 @@ PREDEFINED_TOOLS = [
         }
     ),
     AgentTool(
-        name="web_search",
-        display_name="网络搜索",
-        description="在互联网上搜索信息",
-        category=TOOL_CATEGORY_SEARCH,
-        parameters={
-            "query": {"type": "string", "description": "搜索查询"},
-            "num_results": {"type": "integer", "default": 5}
-        }
-    ),
-    AgentTool(
         name="datetime",
         display_name="当前时间",
         description="获取当前日期和时间",
         category=TOOL_CATEGORY_SYSTEM,
         parameters={}
+    ),
+    AgentTool(
+        name="code_executor",
+        display_name="代码执行",
+        description="安全执行 Python 代码（沙箱隔离）",
+        category=TOOL_CATEGORY_SYSTEM,
+        parameters={
+            "code": {"type": "string", "description": "要执行的 Python 代码"},
+            "timeout": {"type": "integer", "default": 30, "description": "超时时间（秒）"}
+        }
+    ),
+    AgentTool(
+        name="browser",
+        display_name="浏览器",
+        description="网页浏览、搜索、数据抓取（无头浏览器）",
+        category=TOOL_CATEGORY_SEARCH,
+        parameters={
+            "action": {"type": "string", "description": "操作类型：navigate/search/scrape/screenshot/click/fill"},
+            "url": {"type": "string", "description": "目标 URL"},
+            "selector": {"type": "string", "description": "CSS 选择器"},
+            "text": {"type": "string", "description": "文本内容"},
+            "wait_time": {"type": "integer", "default": 3000, "description": "等待时间（毫秒）"}
+        }
+    ),
+    AgentTool(
+        name="file",
+        display_name="文件操作",
+        description="读写文件、列出目录",
+        category=TOOL_CATEGORY_SYSTEM,
+        parameters={
+            "action": {"type": "string", "description": "操作类型：read/write/list/exists/delete"},
+            "path": {"type": "string", "description": "文件路径"},
+            "content": {"type": "string", "description": "文件内容（用于 write）"},
+            "allowed_dirs": {"type": "array", "description": "允许访问的目录列表"}
+        }
     ),
 ]

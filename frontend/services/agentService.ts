@@ -1,5 +1,5 @@
 import { CONFIG } from '../config';
-import { Agent, AgentType, AgentResponse } from '../types';
+import { Agent, AgentType, AgentResponse, AgentAPI } from '../types';
 
 // Mock 数据
 const MOCK_AGENTS: Agent[] = [
@@ -135,7 +135,7 @@ export const agentService = {
   /**
    * 获取 Agent 列表
    */
-  async getAgents(): Promise<Agent[]> {
+  async getAgents(): Promise<AgentAPI[]> {
     if (CONFIG.USE_MOCK) return MOCK_AGENTS;
 
     const response = await fetch(`${CONFIG.API_BASE_URL}/agents/`, {
@@ -148,17 +148,22 @@ export const agentService = {
     }
 
     const data = await response.json();
-    return data.agents.map((agent: AgentResponse) => ({
+    return data.agents.map((agent: any) => ({
       id: agent.id,
       name: agent.name,
-      displayName: agent.display_name,
+      display_name: agent.display_name,
       description: agent.description,
-      type: agent.agent_type as AgentType,  // 修复：使用 agent_type
-      icon: agent.icon || undefined,
-      systemPrompt: agent.system_prompt || undefined,
-      isActive: agent.is_active,
-      createdAt: new Date(agent.created_at).getTime(),
-      order: agent.order
+      agent_type: agent.agent_type,
+      system_prompt: agent.system_prompt,
+      knowledge_base_ids: agent.knowledge_base_ids || [],
+      tools: agent.tools || [],
+      config: agent.config || {},
+      llm_model_id: agent.llm_model_id,
+      llm_model_name: agent.llm_model_name || null,
+      is_active: agent.is_active,  // 保持蛇形命名，匹配 AgentAPI 类型
+      created_by: agent.created_by,
+      created_at: agent.created_at,
+      updated_at: agent.updated_at
     }));
   },
 
@@ -172,7 +177,7 @@ export const agentService = {
       return agent;
     }
 
-    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/`, {
+    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}`, {
       headers: getAuthHeaders()
     });
 
@@ -230,7 +235,7 @@ export const agentService = {
    * 删除 Agent
    */
   async deleteAgent(agentId: string): Promise<void> {
-    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/`, {
+    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
@@ -248,7 +253,7 @@ export const agentService = {
   async agentChat(agentId: string, request: AgentChatRequest): Promise<AsyncIterable<AgentStreamEvent>> {
     console.log('[Agent Chat] 开始对话:', { agentId, request });
 
-    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/chat/`, {
+    const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/chat`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(request)

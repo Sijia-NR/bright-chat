@@ -1,15 +1,39 @@
 
 import React from 'react';
-import { ChevronDown, Share2, MoreHorizontal, LayoutGrid, Search } from 'lucide-react';
+import { ChevronDown, Share2, MoreHorizontal, LayoutGrid, Search, Bot } from 'lucide-react';
+import { Agent } from '../types';
 
 interface TopBarProps {
   models: any[];
   selectedModelId: string;
   onModelChange: (id: string) => void;
+  selectedAgent: Agent | null;  // 新增：当前选中的 Agent
 }
 
-const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange }) => {
-  // 当没有选中模型或模型列表为空时，显示提示
+const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange, selectedAgent }) => {
+  // 如果是 Agent 对话，显示 Agent 信息
+  if (selectedAgent) {
+    return (
+      <header className="h-14 border-b border-gray-100 bg-white/80 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between px-6">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg">
+            <Bot size={16} />
+            <span className="text-sm font-bold">{selectedAgent.displayName}</span>
+          </div>
+          <span className="text-xs text-gray-400">数字员工</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Search size={18} /></button>
+          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Share2 size={18} /></button>
+          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><LayoutGrid size={18} /></button>
+          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><MoreHorizontal size={18} /></button>
+        </div>
+      </header>
+    );
+  }
+
+  // 普通模型对话：显示模型选择器
   const currentModel = selectedModelId
     ? models.find(m => m.id === selectedModelId)
     : null;

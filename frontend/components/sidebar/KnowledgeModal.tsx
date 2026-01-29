@@ -25,6 +25,9 @@ const KnowledgeModal: React.FC<KnowledgeModalProps> = ({
   const [newGroupName, setNewGroupName] = useState('');
   const [showNewGroupInput, setShowNewGroupInput] = useState(false);
 
+  // 调试日志
+  console.log('🔍 KnowledgeModal 渲染状态:', { isOpen, groupsCount: groups.length, basesCount: bases.length });
+
   if (!isOpen) return null;
 
   const getBasesByGroup = (groupId: string): KnowledgeBase[] => {

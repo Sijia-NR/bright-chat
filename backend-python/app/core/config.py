@@ -60,7 +60,7 @@ class Settings(PydanticBaseSettings):
 
     # ChromaDB settings
     CHROMADB_HOST: str = "localhost"
-    CHROMADB_PORT: int = 8000
+    CHROMADB_PORT: int = 8002
 
     # RAG settings
     RAG_USE_CHROMADB_EMBEDDING: bool = False

@@ -400,7 +400,8 @@ async def upload_document(
                 file.filename,
                 kb.chunk_size,
                 kb.chunk_overlap,
-                db
+                db,
+                current_user.id  # ✅ 传递 user_id
             )
 
         return DocumentUploadResponse(
@@ -424,7 +425,8 @@ async def process_document_background(
     filename: str,
     chunk_size: int,
     chunk_overlap: int,
-    db: Session
+    db: Session,
+    user_id: str  # ✅ 添加 user_id 参数
 ):
     """后台处理文档"""
     from ..core.database import SessionLocal
@@ -437,7 +439,7 @@ async def process_document_background(
         result = await processor.process_document(
             file_path=file_path,
             knowledge_base_id=kb_id,
-            user_id="",  # 从知识库获取
+            user_id=user_id,  # ✅ 使用传入的 user_id
             filename=filename,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Star, LogOut, Settings } from 'lucide-react';
-import { ChatSession, User, Agent, KnowledgeGroup, KnowledgeBase } from '../types';
+import { ChatSession, User, Agent, AgentAPI, KnowledgeBase } from '../types';
 import AgentSection from './sidebar/AgentSection';
 import KnowledgeSection from './sidebar/KnowledgeSection';
 import SessionTrailSection from './sidebar/SessionTrailSection';
-import KnowledgeModal from './sidebar/KnowledgeModal';
 
 interface SidebarSectionState {
   agents: boolean;
@@ -22,16 +21,13 @@ interface SidebarProps {
   onLogout: () => void;
   onOpenAdmin: () => void;
   onOpenFavorites: () => void;
-  // 新增 props
-  agents: Agent[];
+  agents: AgentAPI[];
   selectedAgent: Agent | null;
-  onAgentClick: (agent: Agent) => void;
-  knowledgeGroups: KnowledgeGroup[];
-  knowledgeBases: KnowledgeBase[];
+  onAgentClick: (agent: AgentAPI) => void;
+  knowledgeBases: KnowledgeBase[];  // ✅ 只需要知识库列表
   onKnowledgeRefresh: () => void;
-  onCreateKnowledgeGroup: (name: string, description?: string) => Promise<void>;
-  onUpdateKnowledgeGroup: (id: string, name: string, description?: string) => Promise<void>;
-  onDeleteKnowledgeGroup: (id: string) => Promise<void>;
+  onCreateKnowledgeBase: () => Promise<void>;  // ✅ 创建知识库
+  onSelectKnowledgeBase: (baseId: string) => void;  // ✅ 选择知识库
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -47,20 +43,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   agents,
   selectedAgent,
   onAgentClick,
-  knowledgeGroups,
   knowledgeBases,
   onKnowledgeRefresh,
-  onCreateKnowledgeGroup,
-  onUpdateKnowledgeGroup,
-  onDeleteKnowledgeGroup
+  onCreateKnowledgeBase,
+  onSelectKnowledgeBase
 }) => {
   const [sections, setSections] = useState<SidebarSectionState>({
     agents: true,
     knowledge: true,
     sessions: true
   });
-
-  const [isKnowledgeModalOpen, setIsKnowledgeModalOpen] = useState(false);
 
   // 从 localStorage 恢复折叠状态
   useEffect(() => {
@@ -97,7 +89,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 数字员工模块 */}
       <AgentSection
-        agents={agents}
+        agents={agents.filter(agent => agent.is_active)}
         isExpanded={sections.agents}
         onToggle={() => toggleSection('agents')}
         onAgentClick={onAgentClick}
@@ -105,11 +97,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 个人知识库模块 */}
       <KnowledgeSection
-        groups={knowledgeGroups}
         bases={knowledgeBases}
         isExpanded={sections.knowledge}
         onToggle={() => toggleSection('knowledge')}
-        onOpenManage={() => setIsKnowledgeModalOpen(true)}
+        onOpenManage={() => {/* TODO: 打开知识库管理页面 */}}
+        onCreateBase={async () => {
+          const name = prompt('请输入知识库名称:');
+          if (!name) return;
+          await onCreateKnowledgeBase();
+        }}
+        onSelectBase={onSelectKnowledgeBase}
       />
 
       {/* 会话轨迹模块 */}
@@ -120,6 +117,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         onToggle={() => toggleSection('sessions')}
         onSelectSession={onSelectSession}
         onDeleteSession={onDeleteSession}
+        agents={agents}
       />
 
       {/* 收藏的消息入口 */}
@@ -148,39 +146,23 @@ const Sidebar: React.FC<SidebarProps> = ({
 
           {currentUser.role === 'admin' && (
             <button
-              data-testid="admin-panel-button"
               onClick={onOpenAdmin}
-              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-              title="系统管理"
+              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+              title="管理面板"
             >
-              <Settings size={18} />
+              <Settings size={16} />
             </button>
           )}
+
+          <button
+            onClick={onLogout}
+            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+            title="退出登录"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
-
-        <button
-          data-testid="logout-button"
-          onClick={onLogout}
-          className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold text-gray-400 hover:text-red-500 transition-all border-2 border-transparent hover:border-red-50 hover:bg-red-50/50 rounded-2xl"
-        >
-          <LogOut size={14} />
-          <span>退出登录</span>
-        </button>
       </div>
-
-      {/* 知识库管理弹窗 */}
-      <KnowledgeModal
-        isOpen={isKnowledgeModalOpen}
-        onClose={() => {
-          setIsKnowledgeModalOpen(false);
-          onKnowledgeRefresh();
-        }}
-        groups={knowledgeGroups}
-        bases={knowledgeBases}
-        onCreateGroup={onCreateKnowledgeGroup}
-        onUpdateGroup={onUpdateKnowledgeGroup}
-        onDeleteGroup={onDeleteKnowledgeGroup}
-      />
     </aside>
   );
 };

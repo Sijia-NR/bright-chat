@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 import asyncio
 import json
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Enum as SQLEnum, Text, ForeignKey, UniqueConstraint, Integer, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Enum as SQLEnum, Text, ForeignKey, UniqueConstraint, Integer, JSON, text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -108,6 +108,7 @@ class Session(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String(200), nullable=False)
     user_id = Column(String(36), nullable=False, index=True)
+    agent_id = Column(String(36), nullable=True, index=True)  # 新增：关联的 Agent ID
     last_updated = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
     created_at = Column(DateTime, nullable=False, default=func.now())
 
@@ -190,7 +191,7 @@ class KnowledgeBase(Base):
     """知识库表"""
     __tablename__ = "knowledge_bases"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    group_id = Column(String(36), ForeignKey("knowledge_groups.id"), nullable=False)
+    group_id = Column(String(36), ForeignKey("knowledge_groups.id"), nullable=True)  # 允许为空，支持独立知识库
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
@@ -211,7 +212,7 @@ class Document(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id"), nullable=False)
     filename = Column(String(255), nullable=False)
-    file_type = Column(String(100), nullable=False)
+    file_type = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
     upload_status = Column(String(50), default="pending")  # pending, processing, completed, error
     chunk_count = Column(Integer, default=0)
@@ -256,12 +257,14 @@ class LoginResponse(BaseModel):
 class SessionCreate(BaseModel):
     title: str
     user_id: str
+    agent_id: Optional[str] = None  # 新增：关联的 Agent ID
 
 class SessionResponse(BaseModel):
     id: str
     title: str
     last_updated: datetime
     user_id: str
+    agent_id: Optional[str] = None  # 新增：关联的 Agent ID
 
     class Config:
         from_attributes = True
@@ -376,7 +379,7 @@ class KnowledgeGroupResponse(BaseModel):
 
 class KnowledgeBaseCreate(BaseModel):
     """创建知识库请求"""
-    group_id: str
+    group_id: Optional[str] = None  # 允许不指定分组，创建独立知识库
     name: str
     description: Optional[str] = None
     embedding_model: str = "bge-large-zh-v1.5"
@@ -769,7 +772,8 @@ async def get_sessions(user_id: str, db: Session = Depends(get_db)):
 async def create_session(session_data: SessionCreate, db: Session = Depends(get_db)):
     db_session = Session(
         title=session_data.title,
-        user_id=session_data.user_id
+        user_id=session_data.user_id,
+        agent_id=session_data.agent_id  # 新增：保存 agent_id
     )
     db.add(db_session)
     db.commit()
@@ -1387,33 +1391,35 @@ async def process_document_background(
 
             logger.info(f"  ✅ 处理完成: {result}")
 
-            # 4. 更新数据库状态
-            if result.get("status") == "completed" or isinstance(result, list):
-                chunk_count = len(result) if isinstance(result, list) else result.get("chunk_count", 0)
-
-                doc.upload_status = "completed"
-                doc.chunk_count = chunk_count
-                doc.processed_at = func.now()
-                doc.error_message = None
-                db_session.commit()
-
-                logger.info(f"{'='*60}")
-                logger.info(f"✅ [文档处理] 文档 {doc_id} 处理完成")
-                logger.info(f"   Chunks: {chunk_count}")
-                logger.info(f"{'='*60}")
-
-                # 成功后退出重试循环
-                return
+            # 4. 更新数据库状态 - 简化逻辑
+            if result.get("status") == "completed":
+                chunk_count = result.get("chunk_count", 0)
+            elif isinstance(result, list):
+                chunk_count = len(result)
             else:
-                error_msg = result.get("error", "处理失败")
-                logger.error(f"  ❌ 处理失败: {error_msg}")
+                chunk_count = 0
 
-                if attempt < max_retries:
-                    wait_time = attempt * 2  # 指数退避
-                    logger.warning(f"  ⏳ {wait_time}秒后重试...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    raise Exception(error_msg)
+            doc.upload_status = "completed"
+            doc.chunk_count = chunk_count
+            doc.processed_at = func.now()
+            doc.error_message = None
+            db_session.commit()
+
+            logger.info(f"{'='*60}")
+            logger.info(f"✅ [文档处理] 文档 {doc_id} 处理完成")
+            logger.info(f"   Chunks: {chunk_count}")
+            logger.info(f"{'='*60}")
+
+            # ✅ 修复：成功后清理临时文件
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.info(f"✅ [文档处理] 已清理临时文件: {file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️  [文档处理] 清理临时文件失败: {cleanup_error}")
+
+            # 成功后退出重试循环
+            return
 
         except Exception as e:
             logger.error(f"  ❌ 尝试 {attempt} 失败: {e}", exc_info=True)
@@ -1441,11 +1447,20 @@ async def process_document_background(
                 await asyncio.sleep(wait_time)
 
         finally:
+            # ✅ 修复：确保在任何情况下都清理数据库连接和临时文件
             if db_session:
                 try:
                     db_session.close()
                 except:
                     pass
+
+            # ✅ 修复：确保临时文件被清理（仅在所有重试都失败后）
+            if attempt == max_retries and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.info(f"✅ [文档处理] 已清理临时文件（重试失败后）: {file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️  [文档处理] 清理临时文件失败: {cleanup_error}")
 
 # ==================== Knowledge Base APIs ====================
 
@@ -1539,24 +1554,33 @@ async def create_knowledge_base(
     db: Session = Depends(get_db)
 ):
     """创建知识库"""
-    # 验证分组存在且属于当前用户
-    group = db.query(KnowledgeGroup).filter(
-        KnowledgeGroup.id == base_data.group_id,
-        KnowledgeGroup.user_id == current_user.id
-    ).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="分组不存在")
+    # 如果指定了 group_id，验证存在且属于当前用户
+    if base_data.group_id:
+        group = db.query(KnowledgeGroup).filter(
+            KnowledgeGroup.id == base_data.group_id,
+            KnowledgeGroup.user_id == current_user.id
+        ).first()
+        if not group:
+            raise HTTPException(status_code=404, detail="分组不存在")
 
-    # 检查名称是否重复
-    existing = db.query(KnowledgeBase).filter(
-        KnowledgeBase.group_id == base_data.group_id,
+    # 检查名称是否重复（在同一分组下或全局）
+    existing_query = db.query(KnowledgeBase).filter(
+        KnowledgeBase.user_id == current_user.id,
         KnowledgeBase.name == base_data.name
-    ).first()
+    )
+    # 如果指定了分组，只在同一分组内检查重复
+    if base_data.group_id:
+        existing_query = existing_query.filter(KnowledgeBase.group_id == base_data.group_id)
+    else:
+        # 如果没有分组，检查其他无分组的知识库是否有重名
+        existing_query = existing_query.filter(KnowledgeBase.group_id == None)
+
+    existing = existing_query.first()
     if existing:
         raise HTTPException(status_code=400, detail="知识库名称已存在")
 
     base = KnowledgeBase(
-        group_id=base_data.group_id,
+        group_id=base_data.group_id,  # 可以为 None
         user_id=current_user.id,
         name=base_data.name,
         description=base_data.description,
@@ -1605,6 +1629,16 @@ async def delete_knowledge_base(
     if not base:
         raise HTTPException(status_code=404, detail="知识库不存在")
 
+    # 先清理 ChromaDB 向量
+    try:
+        processor = DocumentProcessor(rag_config)
+        await processor.delete_knowledge_base(kb_id)
+        logger.info(f"已清理知识库 {kb_id} 的 ChromaDB 向量")
+    except Exception as e:
+        logger.error(f"清理 ChromaDB 向量失败: {e}")
+        # 继续删除 MySQL 记录，不阻止操作
+
+    # 再删除 MySQL 记录
     db.delete(base)
     db.commit()
     return {"message": "知识库已删除"}
@@ -1747,34 +1781,28 @@ async def search_knowledge(
         }
 
     try:
-        rag_config = get_rag_config()
-        collection = rag_config.get_or_create_collection(KNOWLEDGE_COLLECTION)
-
-        # 使用与向量化相同的嵌入模型
-        query_embedding = rag_config.embedding_model.encode([query])
+        # 使用 RAGRetriever 进行搜索（支持多知识库搜索）
+        from app.rag.retriever import RAGRetriever
+        retriever = RAGRetriever(rag_config)
 
         # 执行检索
-        results = collection.query(
-            query_embeddings=query_embedding,
-            n_results=top_k,
-            where={"knowledge_base_id": {"$in": kb_ids}}
+        search_results = await retriever.search(
+            query=query,
+            knowledge_base_ids=kb_ids,
+            user_id=current_user.id,
+            top_k=top_k
         )
 
         # 格式化结果
         formatted_results = []
-        if results and 'documents' in results and results['documents']:
-            for i, doc in enumerate(results['documents'][0]):
-                if i < len(results.get('metadatas', [[]])[0]):
-                    metadata = results['metadatas'][0][i]
-                    distance = results.get('distances', [[]])[0][i] if 'distances' in results else None
-                    formatted_results.append({
-                        "content": doc,
-                        "metadata": metadata,
-                        "score": 1 - distance if distance else 0.0,
-                        "knowledge_base_id": metadata.get("knowledge_base_id"),
-                        "document_id": metadata.get("document_id"),
-                        "chunk_index": metadata.get("chunk_index")
-                    })
+        for result in search_results:
+            formatted_results.append({
+                "id": result["id"],
+                "content": result["content"],
+                "metadata": result["metadata"],
+                "similarity": round(result["similarity"], 3),
+                "distance": round(result["distance"], 3)
+            })
 
         return {"results": formatted_results, "query": query, "total": len(formatted_results)}
     except Exception as e:
@@ -1805,6 +1833,16 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
+    # 先清理 ChromaDB 向量
+    try:
+        processor = DocumentProcessor(rag_config)
+        await processor.delete_document(doc_id)
+        logger.info(f"已清理文档 {doc_id} 的 ChromaDB 向量")
+    except Exception as e:
+        logger.error(f"清理 ChromaDB 向量失败: {e}")
+        # 继续删除 MySQL 记录，不阻止操作
+
+    # 再删除 MySQL 记录
     db.delete(doc)
     db.commit()
     return {"message": "文档已删除"}
@@ -1881,7 +1919,7 @@ async def upload_document(
                 processor = get_document_processor()
 
                 # 直接处理文档
-                chunks = await processor.process_document(
+                result = await processor.process_document(
                     file_path=str(temp_file_path),
                     knowledge_base_id=kb_id,
                     user_id=current_user.id,
@@ -1891,12 +1929,20 @@ async def upload_document(
                     document_id=document.id
                 )
 
-                # 更新文档状态
-                document.upload_status = "completed"
-                document.chunk_count = len(chunks)
-                db.commit()
-
-                logger.info(f"✅ [文档上传] 同步处理成功: {len(chunks)} 个chunks")
+                # ✅ 修复：从 result dict 中正确获取 chunk_count
+                if result.get("status") == "completed":
+                    document.upload_status = "completed"
+                    document.chunk_count = result.get("chunk_count", 0)
+                    db.commit()
+                    logger.info(f"✅ [文档上传] 同步处理成功: {result.get('chunk_count', 0)} 个chunks")
+                else:
+                    document.upload_status = "error"
+                    document.error_message = result.get("error", "未知错误")
+                    db.commit()
+                    logger.error(f"❌ [文档上传] 同步处理失败: {document.error_message}")
+                    raise HTTPException(status_code=500, detail=f"文档处理失败: {document.error_message}")
+            except HTTPException:
+                raise
             except Exception as e:
                 # 同步处理失败
                 document.upload_status = "error"
@@ -1904,6 +1950,14 @@ async def upload_document(
                 db.commit()
                 logger.error(f"❌ [文档上传] 同步处理失败: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
+            finally:
+                # ✅ 修复：同步模式完成后清理临时文件
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                        logger.info(f"[文档上传] 已清理临时文件: {temp_file_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"[文档上传] 清理临时文件失败: {cleanup_error}")
         else:
             # 异步处理模式（原有逻辑）
             logger.info(f"[文档上传] 使用异步处理模式")
@@ -1915,6 +1969,7 @@ async def upload_document(
                 current_user.id
             )
             logger.info(f"[文档上传] 后台处理任务已启动: {document.id}")
+            # 注意：异步模式下，临时文件由 process_document_background 负责清理
 
         return document
 
@@ -1954,7 +2009,7 @@ async def system_health_check(current_user: User = Depends(get_current_user)):
     # 1. 检查数据库
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         health["components"]["database"] = {"status": "healthy", "message": "数据库连接正常"}
     except Exception as e:
@@ -2050,7 +2105,7 @@ async def startup_event():
     logger.info("1. 检查数据库连接...")
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         logger.info("   ✅ 数据库连接正常")
     except Exception as e:

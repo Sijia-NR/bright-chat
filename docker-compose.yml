@@ -116,7 +116,7 @@ services:
     container_name: AIWorkbench-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-8080}:80"
+      - "${FRONTEND_PORT:-3000}:80"
     environment:
       - NODE_ENV=production
     networks:

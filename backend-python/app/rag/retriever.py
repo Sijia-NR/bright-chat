@@ -81,13 +81,16 @@ class RAGRetriever:
             # 所以我们需要分别查询每个知识库，然后合并结果
             all_results = []
 
+            # ✅ 修复：增加每个知识库的检索数量，确保最终结果包含真正的高相似度文档
+            retrieval_per_kb = top_k * len(knowledge_base_ids) if len(knowledge_base_ids) > 0 else top_k
+
             for kb_id in knowledge_base_ids:
                 collection = self.config.get_or_create_collection(KNOWLEDGE_COLLECTION)
 
                 # 查询（使用正确的 ChromaDB where 语法）
                 results = collection.query(
                     query_embeddings=[query_embedding],
-                    n_results=top_k,
+                    n_results=retrieval_per_kb,  # ✅ 增加检索数量
                     where={
                         "$and": [
                             {"user_id": user_id},
@@ -115,7 +118,7 @@ class RAGRetriever:
                             "distance": distance
                         })
 
-            # 3. 按相似度排序并返回 top_k
+            # 3. ✅ 按相似度排序并返回 top_k（确保真正的高相似度文档被返回）
             all_results.sort(key=lambda x: x['similarity'], reverse=True)
             return all_results[:top_k]
 
