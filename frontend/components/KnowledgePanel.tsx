@@ -199,7 +199,7 @@ export function KnowledgePanel({ onClose, userId }: KnowledgePanelProps) {
     if (!confirm(`确定要删除文档 "${doc.filename}" 吗？`)) return;
 
     try {
-      await knowledgeService.deleteDocument(doc.id);
+      await knowledgeService.deleteDocument(selectedBase?.id || '', doc.id);
       if (selectedBase) {
         loadDocuments(selectedBase);
       }

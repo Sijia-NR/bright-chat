@@ -244,8 +244,8 @@ export const knowledgeService = {
     return resp.json();
   },
 
-  async deleteDocument(docId: string): Promise<void> {
-    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/documents/${docId}`, {
+  async deleteDocument(kbId: string, docId: string): Promise<void> {
+    const resp = await fetch(`${CONFIG.API_BASE_URL}/knowledge/bases/${kbId}/documents/${docId}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
     });

@@ -105,7 +105,7 @@ const KnowledgeBaseDetail: React.FC<KnowledgeBaseDetailProps> = ({ baseId, onClo
     if (!confirm('确定删除这个文档吗？')) return;
 
     try {
-      await knowledgeService.deleteDocument(docId);
+      await knowledgeService.deleteDocument(baseId, docId);
       await loadDocuments();
       if (selectedDocId === docId) {
         setSelectedDocId(null);

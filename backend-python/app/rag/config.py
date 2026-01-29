@@ -214,15 +214,8 @@ class RAGConfig:
                 """使用 HTTP API 查询"""
                 import json
                 try:
-                    # 使用 get endpoint
-                    params = {}
-                    if limit:
-                        params["limit"] = limit
-                    if offset:
-                        params["offset"] = offset
-
-                    # 这里简化处理,实际应该使用完整的查询语法
-                    resp = requests.get(
+                    # ChromaDB v2 API 使用 POST 请求
+                    resp = requests.post(
                         f"http://localhost:8002/api/v2/tenants/default_tenant/databases/default_database/collections/{self.name}/get",
                         json={
                             "where": where,
@@ -234,9 +227,10 @@ class RAGConfig:
                     if resp.status_code == 200:
                         return resp.json()
                     else:
+                        logger.error(f"HTTP API 查询失败: {resp.status_code} - {resp.text}")
                         return {"documents": [], "metadatas": [], "ids": []}
                 except Exception as e:
-                    logger.error(f"HTTP API 查询失败: {e}")
+                    logger.error(f"HTTP API 查询异常: {e}")
                     return {"documents": [], "metadatas": [], "ids": []}
 
             def add(self, documents, metadatas, ids):
