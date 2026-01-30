@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Star, LogOut, Settings } from 'lucide-react';
+import { Plus, LogOut, Settings } from 'lucide-react';
 import { ChatSession, User, Agent, AgentAPI, KnowledgeBase } from '../types';
 import AgentSection from './sidebar/AgentSection';
 import KnowledgeSection from './sidebar/KnowledgeSection';
@@ -20,7 +20,6 @@ interface SidebarProps {
   currentUser: User;
   onLogout: () => void;
   onOpenAdmin: () => void;
-  onOpenFavorites: () => void;
   onOpenManage: () => void;  // ✅ 添加知识库管理按钮回调
   agents: AgentAPI[];
   selectedAgent: Agent | null;
@@ -39,7 +38,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   onLogout,
   onOpenAdmin,
-  onOpenFavorites,
   onOpenManage,
   agents,
   selectedAgent,
@@ -114,17 +112,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         onDeleteSession={onDeleteSession}
         agents={agents}
       />
-
-      {/* 收藏的消息入口 */}
-      <div className="p-4 border-t border-gray-50">
-        <button
-          onClick={onOpenFavorites}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-yellow-50 text-gray-600 hover:text-yellow-600 transition-all text-sm font-bold group"
-        >
-          <Star size={18} className="group-hover:fill-yellow-400 transition-all" />
-          <span>收藏的消息</span>
-        </button>
-      </div>
 
       {/* 用户信息区域 */}
       <div className="p-4 border-t border-gray-50 space-y-3 bg-white" data-testid="user-info-section">

@@ -658,7 +658,6 @@ const AppContent: React.FC = () => {
         onLogout={handleLogout}
         onOpenAdmin={() => setView('admin')}
         onOpenManage={() => setIsKnowledgeManageOpen(true)}
-        onOpenFavorites={() => setIsFavoritesOpen(true)}
         agents={agents}
         selectedAgent={selectedAgent}
         onAgentClick={handleAgentClick}
