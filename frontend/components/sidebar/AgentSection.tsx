@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, ChevronUp, Crown, BarChart3, PenTool } from 'lucide-react';
+import { ChevronDown, ChevronUp, Crown, BarChart3, PenTool, Bot } from 'lucide-react';
 import { Agent, AgentAPI, AgentType } from '../../types';
 
 interface AgentSectionProps {
@@ -51,8 +51,9 @@ const AgentSection: React.FC<AgentSectionProps> = ({
                 onClick={() => onAgentClick(agent)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium ${colorClass}`}
               >
-                {IconComponent && <IconComponent size={18} />}
-                <span>{agent.display_name || agent.name}</span>
+                <Bot size={18} />
+                <span className="flex-1 text-left">{agent.display_name || agent.name}</span>
+                {IconComponent && <IconComponent size={14} className="opacity-60" />}
               </button>
             );
           })}
