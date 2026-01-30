@@ -1,16 +1,25 @@
 
 import React from 'react';
-import { ChevronDown, Share2, MoreHorizontal, LayoutGrid, Search, Bot } from 'lucide-react';
+import { ChevronDown, Star, BookOpen, Search, Bot } from 'lucide-react';
 import { Agent } from '../types';
 
 interface TopBarProps {
   models: any[];
   selectedModelId: string;
   onModelChange: (id: string) => void;
-  selectedAgent: Agent | null;  // 新增：当前选中的 Agent
+  selectedAgent: Agent | null;
+  onOpenFavorites?: () => void;  // 新增：打开收藏消息
+  onOpenKnowledgeSearch?: () => void;  // 新增：打开知识库搜索
 }
 
-const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange, selectedAgent }) => {
+const TopBar: React.FC<TopBarProps> = ({
+  models,
+  selectedModelId,
+  onModelChange,
+  selectedAgent,
+  onOpenFavorites,
+  onOpenKnowledgeSearch
+}) => {
   // 如果是 Agent 对话，显示 Agent 信息
   if (selectedAgent) {
     return (
@@ -24,10 +33,24 @@ const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange,
         </div>
 
         <div className="flex items-center gap-2">
-          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Search size={18} /></button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Share2 size={18} /></button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><LayoutGrid size={18} /></button>
-          <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><MoreHorizontal size={18} /></button>
+          {onOpenKnowledgeSearch && (
+            <button
+              onClick={onOpenKnowledgeSearch}
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-all"
+              title="知识库搜索"
+            >
+              <BookOpen size={18} />
+            </button>
+          )}
+          {onOpenFavorites && (
+            <button
+              onClick={onOpenFavorites}
+              className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-all"
+              title="收藏消息"
+            >
+              <Star size={18} />
+            </button>
+          )}
         </div>
       </header>
     );
@@ -80,10 +103,24 @@ const TopBar: React.FC<TopBarProps> = ({ models, selectedModelId, onModelChange,
       </div>
 
       <div className="flex items-center gap-2">
-        <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Search size={18} /></button>
-        <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Share2 size={18} /></button>
-        <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><LayoutGrid size={18} /></button>
-        <button className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><MoreHorizontal size={18} /></button>
+        {onOpenKnowledgeSearch && (
+          <button
+            onClick={onOpenKnowledgeSearch}
+            className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-all"
+            title="知识库搜索"
+          >
+            <BookOpen size={18} />
+          </button>
+        )}
+        {onOpenFavorites && (
+          <button
+            onClick={onOpenFavorites}
+            className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-all"
+            title="收藏消息"
+          >
+            <Star size={18} />
+          </button>
+        )}
       </div>
     </header>
   );

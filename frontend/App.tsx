@@ -2,6 +2,11 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
+import { AgentPlanViewer } from './components/AgentPlanViewer';
+import { AgentExecutionSummary } from './components/AgentExecutionSummary';
+import { AgentExecutionDetails } from './components/AgentExecutionDetails';
+import KnowledgeSearchModal from './components/KnowledgeSearchModal';
+import type { AgentPlanEvent } from './types';
 import ChatInput from './components/ChatInput';
 import Login from './components/Login';
 import AdminPanel from './components/AdminPanel';
@@ -30,6 +35,7 @@ const AppContent: React.FC = () => {
   const [view, setView] = useState<'chat' | 'admin' | 'knowledge'>('chat');
   const [isKnowledgeManageOpen, setIsKnowledgeManageOpen] = useState(false);
   const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
+  const [isKnowledgeSearchOpen, setIsKnowledgeSearchOpen] = useState(false);  // 新增：知识库搜索弹窗
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -47,8 +53,16 @@ const AppContent: React.FC = () => {
   const [agentRefreshTrigger, setAgentRefreshTrigger] = useState(0);
   const [isAgentLoading, setIsAgentLoading] = useState(false);  // Agent 加载状态
   const [agentReady, setAgentReady] = useState(false);  // Agent 就绪状态
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);  // ✅ 只需要知识库列表
-  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null);  // ✅ 选中的知识库
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);  // 知识库列表
+  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null);  // 知识库详情页面选中的知识库（侧边栏点击）
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<string[]>([]);  // Agent对话时选中的知识库（多选）
+
+  // ✨ Phase 1: 规划相关状态
+  const [agentPlan, setAgentPlan] = useState<AgentPlanEvent | null>(null);
+  const [currentSubtaskIndex, setCurrentSubtaskIndex] = useState(0);
+
+  // Agent 执行记录映射 (messageId -> AgentExecution)
+  const [agentExecutions, setAgentExecutions] = useState<Record<string, import('./types').AgentExecution>>({});
 
   // 刷新模型列表的方法
   const refreshModels = useCallback(async () => {
@@ -66,6 +80,17 @@ const AppContent: React.FC = () => {
       console.error("Failed to refresh models", e);
     }
   }, [selectedModelId]);
+
+  // 切换 Agent 执行详情显示
+  const toggleAgentExecution = useCallback((messageId: string) => {
+    setAgentExecutions(prev => ({
+      ...prev,
+      [messageId]: {
+        ...prev[messageId],
+        showDetails: !prev[messageId]?.showDetails
+      }
+    }));
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -199,17 +224,65 @@ const AppContent: React.FC = () => {
         setMessages(prev => [...prev, { id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now() }]);
 
         let fullContent = "";
-        const eventGenerator = await agentService.agentChat(selectedAgent.id, {
+
+        // 📋 调试日志：显示知识库选择状态
+        console.log('[Agent Chat] 发送请求:', {
+          query: text,
+          agent_id: selectedAgent.id,
+          agent_name: selectedAgent.name,
+          knowledge_base_ids: selectedKnowledgeBaseIds,
+          knowledge_base_count: selectedKnowledgeBaseIds.length,
+          session_id: currentSessionId || undefined
+        });
+
+        const requestPayload = {
           query: text,  // 关键：使用query字段
           session_id: currentSessionId || undefined,
-          stream: true
-        });
+          stream: true,
+          knowledge_base_ids: selectedKnowledgeBaseIds.length > 0 ? selectedKnowledgeBaseIds : undefined  // 传递运行时选择的知识库
+        };
+
+        console.log('[Chat] 发送请求 payload:', requestPayload);
+        console.log('[Chat] selectedKnowledgeBaseIds:', selectedKnowledgeBaseIds);
+
+        const eventGenerator = await agentService.agentChat(selectedAgent.id, requestPayload);
+
+        // 初始化执行记录
+        const executionStartTime = Date.now();
+        const currentToolCalls: import('./types').AgentExecution['toolCalls'] = [];
+        const currentEvents: import('./types').AgentExecutionEvent[] = [];
+
+        // 为当前消息创建执行记录
+        setAgentExecutions(prev => ({
+          ...prev,
+          [assistantMsgId]: {
+            messageId: assistantMsgId,
+            events: [],
+            toolCalls: [],
+            startTime: executionStartTime,
+            isComplete: false,
+            showDetails: false
+          }
+        }));
 
         for await (const event of eventGenerator) {
           console.log('[Chat] Agent 事件:', event);
 
-          // 处理后端实际发送的事件类型
-          if (event.type === 'start') {
+          // 收集所有事件
+          currentEvents.push(event);
+
+          // ✨ Phase 1: 处理规划事件
+          if (event.type === 'plan') {
+            console.log('[Chat] 收到执行计划:', event);
+            setAgentPlan(event as AgentPlanEvent);
+            setCurrentSubtaskIndex(0);
+          } else if (event.type === 'subtask_status') {
+            console.log('[Chat] 子任务状态更新:', event);
+            const statusEvent = event as any;
+            if (statusEvent.status === 'completed') {
+              setCurrentSubtaskIndex(prev => prev + 1);
+            }
+          } else if (event.type === 'start') {
             console.log('[Chat] Agent 开始执行:', event.execution_id);
           } else if (event.type === 'step') {
             // 步骤事件：显示执行进度
@@ -225,31 +298,63 @@ const AppContent: React.FC = () => {
               setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
             }
           } else if (event.type === 'tool_call') {
-            // 工具调用事件：显示工具执行结果
+            // 🔧 收集工具调用事件（不再拼接到 fullContent）
             const tool = event.tool || 'unknown';
+            const parameters = event.parameters || {};
             const result = event.result;
 
-            console.log('[Chat] Agent 工具调用:', { tool, result });
+            currentToolCalls.push({
+              tool,
+              parameters,
+              result,
+              timestamp: Date.now()
+            });
 
-            // 将工具结果显示在聊天中
-            if (result) {
-              const toolOutput = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-              fullContent += `\n\n🔧 工具 [${tool}] 执行结果:\n${toolOutput}`;
-              setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
-            }
+            console.log('[Chat] Agent 工具调用:', { tool, parameters, result });
+
+            // ⚠️ 不再拼接工具调用结果到消息内容
+            // 最终答案由 complete 事件的 output 提供
           } else if (event.type === 'complete' && event.output) {
-            // 完成事件：显示最终输出
+            // ✅ 完成事件：只显示最终输出
             fullContent = event.output;
             setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
             console.log('[Chat] Agent 执行完成, 输出长度:', fullContent.length);
+
+            // 📊 保存执行记录（默认折叠）
+            setAgentExecutions(prev => ({
+              ...prev,
+              [assistantMsgId]: {
+                ...prev[assistantMsgId],
+                events: [...currentEvents],
+                toolCalls: [...currentToolCalls],
+                endTime: Date.now(),
+                isComplete: true,
+                showDetails: false  // 默认折叠
+              }
+            }));
+
+            setAgentPlan(null);
+            setCurrentSubtaskIndex(0);
           } else if (event.type === 'error') {
             // 错误事件
             const errorMsg = event.error || 'Agent 执行出错';
             fullContent = `❌ 错误: ${errorMsg}`;
             setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
             console.error('[Chat] Agent 错误:', errorMsg);
+            setAgentPlan(null);
+            setCurrentSubtaskIndex(0);
             throw new Error(errorMsg);
           }
+
+          // 实时更新执行记录（用于在执行中显示过程）
+          setAgentExecutions(prev => ({
+            ...prev,
+            [assistantMsgId]: {
+              ...prev[assistantMsgId],
+              events: [...currentEvents],
+              toolCalls: [...currentToolCalls]
+            }
+          }));
         }
 
         // 保存到后端
@@ -327,7 +432,7 @@ const AppContent: React.FC = () => {
       // 确保 isTyping 状态总是被更新
       setIsTyping(false);
     }
-  }, [messages, activeSessionId, currentUser, selectedModelId, selectedAgent, agentReady]);  // ✅ 添加 agentReady
+  }, [messages, activeSessionId, currentUser, selectedModelId, selectedAgent, agentReady, selectedKnowledgeBaseIds]);  // ✅ 添加 selectedKnowledgeBaseIds
 
   const onSelectSession = async (id: string) => {
     console.log('[Session] onSelectSession 开始:', { sessionId: id, currentAgentsCount: agents.length });
@@ -379,10 +484,19 @@ const AppContent: React.FC = () => {
         };
         setSelectedAgent(agent);
         setAgentReady(true);  // ✅ 标记为就绪
+
+        // ✅ 恢复 Agent 的默认知识库（如果有配置）
+        if (agentApi.knowledge_base_ids && agentApi.knowledge_base_ids.length > 0) {
+          setSelectedKnowledgeBaseIds(agentApi.knowledge_base_ids);
+          console.log('[Session] 恢复 Agent 默认知识库:', agentApi.knowledge_base_ids);
+        } else {
+          setSelectedKnowledgeBaseIds([]);
+        }
       } else {
         console.warn('[Session] ❌ Agent 未找到:', session.agentId);
         setSelectedAgent(null);
         setAgentReady(true);  // ✅ 即使失败也标记为就绪（允许普通对话）
+        setSelectedKnowledgeBaseIds([]);  // Agent 未找到，清空知识库选择
       }
       setIsAgentLoading(false);  // ✅ 加载完成
     } else {
@@ -390,6 +504,7 @@ const AppContent: React.FC = () => {
       console.log('[Session] 普通会话，清除 Agent 状态');
       setSelectedAgent(null);
       setAgentReady(true);  // ✅ 普通会话不需要加载，直接就绪
+      setSelectedKnowledgeBaseIds([]);  // 普通会话清空知识库选择
     }
 
     try {
@@ -435,6 +550,7 @@ const AppContent: React.FC = () => {
     setSelectedAgent(null);  // ✅ 清除智能体状态，进入模型服务对话模式
     setAgentReady(true);  // ✅ 新对话不需要加载 Agent
     setIsAgentLoading(false);
+    setSelectedKnowledgeBaseIds([]);  // ✅ 新对话时清空知识库选择
     setView('chat');
   };
 
@@ -460,6 +576,15 @@ const AppContent: React.FC = () => {
     setActiveSessionId(null);
     setMessages([]);
     setSavedMessageCount(0);
+
+    // ✅ 设置 Agent 的默认知识库（如果有配置）
+    if (agentApi.knowledge_base_ids && agentApi.knowledge_base_ids.length > 0) {
+      setSelectedKnowledgeBaseIds(agentApi.knowledge_base_ids);
+      console.log('[Agent] 设置默认知识库:', agentApi.knowledge_base_ids);
+    } else {
+      setSelectedKnowledgeBaseIds([]);  // Agent 没有配置知识库，清空选择
+    }
+
     // ✅ 不立即创建会话，等发送第一条消息时再创建
   };
 
@@ -513,9 +638,9 @@ const AppContent: React.FC = () => {
     }
   };
 
-  // ✅ 处理选择知识库 - 切换到知识库页面视图
+  // 处理从 Sidebar 选择知识库 - 切换到知识库详情视图
   const handleSelectKnowledgeBase = (baseId: string) => {
-    setSelectedKnowledgeBaseId(baseId);
+    setSelectedKnowledgeBaseId(baseId);  // 设置选中的知识库ID
     setView('knowledge');  // 切换到知识库页面视图
   };
 
@@ -571,6 +696,8 @@ const AppContent: React.FC = () => {
               selectedModelId={selectedModelId ?? ''}
               onModelChange={setSelectedModelId}
               selectedAgent={selectedAgent}
+              onOpenFavorites={() => setIsFavoritesOpen(true)}
+              onOpenKnowledgeSearch={() => setIsKnowledgeSearchOpen(true)}
             />
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-0">
               <div className="max-w-3xl mx-auto py-10 min-h-full flex flex-col">
@@ -618,28 +745,55 @@ const AppContent: React.FC = () => {
                   </>
                 ) : (
                   <div className="space-y-8 mb-24" data-testid="messages-container">
-                    {messages.map(m => (
-                      <div key={m.id} data-testid={`message-${m.id}`} data-message-role={m.role} className={`flex gap-4 md:gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                        <div className={`w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-white font-bold shadow-sm ${m.role === 'user' ? 'bg-gray-800' : 'bg-blue-600'}`}>
-                          {m.role === 'user' ? 'U' : 'B'}
+                    {/* ✨ Phase 1: 显示执行计划 */}
+                    {agentPlan && selectedAgent && (
+                      <AgentPlanViewer
+                        plan={agentPlan}
+                        currentSubtaskIndex={currentSubtaskIndex}
+                      />
+                    )}
+
+                    {messages.map(m => {
+                      const execution = agentExecutions[m.id];
+
+                      return (
+                        <div key={m.id} data-testid={`message-${m.id}`} data-message-role={m.role} className={`flex gap-4 md:gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                          <div className={`w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-white font-bold shadow-sm ${m.role === 'user' ? 'bg-gray-800' : 'bg-blue-600'}`}>
+                            {m.role === 'user' ? 'U' : 'B'}
+                          </div>
+                          <div className={`flex-1 ${m.role === 'user' ? 'flex flex-col items-end' : ''}`}>
+                            <div className={`p-4 md:p-5 rounded-2xl max-w-[85%] text-[15px] shadow-sm border ${
+                              m.role === 'user' ? 'bg-blue-600 text-white border-blue-500' : 'bg-white border-gray-100 text-gray-800'
+                            }`}>
+                              {m.role === 'user' ? (
+                                <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                              ) : (
+                                <>
+                                  <MessageContent content={m.content} />
+                                  {/* 只为 assistant 消息显示收藏按钮 */}
+                                  <div className="mt-3">
+                                    <FavoriteButton messageId={m.id} />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+
+                            {/* ✨ Agent 执行摘要和详情（仅当存在时显示） */}
+                            {execution && execution.isComplete && (
+                              <>
+                                <AgentExecutionSummary
+                                  execution={execution}
+                                  onToggle={() => toggleAgentExecution(m.id)}
+                                />
+                                {execution.showDetails && (
+                                  <AgentExecutionDetails execution={execution} />
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div className={`p-4 md:p-5 rounded-2xl max-w-[85%] text-[15px] shadow-sm border ${
-                          m.role === 'user' ? 'bg-blue-600 text-white border-blue-500' : 'bg-white border-gray-100 text-gray-800'
-                        }`}>
-                          {m.role === 'user' ? (
-                            <div className="whitespace-pre-wrap break-words">{m.content}</div>
-                          ) : (
-                            <>
-                              <MessageContent content={m.content} />
-                              {/* 只为 assistant 消息显示收藏按钮 */}
-                              <div className="mt-3">
-                                <FavoriteButton messageId={m.id} />
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {isTyping && (
                       <div className="flex gap-4 md:gap-6 animate-in slide-in-from-bottom-2">
                         <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold animate-pulse">B</div>
@@ -663,9 +817,14 @@ const AppContent: React.FC = () => {
                 )}
               </div>
             </div>
+
             <ChatInput
               onSend={handleSendMessage}
               disabled={isTyping || isAgentLoading || (selectedAgent ? false : (models.length === 0 || !selectedModelId))}
+              selectedAgent={selectedAgent}
+              knowledgeBases={knowledgeBases}
+              selectedKnowledgeBaseIds={selectedKnowledgeBaseIds}
+              onKnowledgeBaseChange={setSelectedKnowledgeBaseIds}
             />
           </>
         )}
@@ -688,6 +847,11 @@ const AppContent: React.FC = () => {
         isOpen={isKnowledgeManageOpen}
         onClose={() => setIsKnowledgeManageOpen(false)}
         onRefresh={refreshKnowledge}
+      />
+
+      <KnowledgeSearchModal
+        isOpen={isKnowledgeSearchOpen}
+        onClose={() => setIsKnowledgeSearchOpen(false)}
       />
     </div>
   );

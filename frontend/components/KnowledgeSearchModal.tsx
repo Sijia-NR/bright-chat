@@ -16,10 +16,11 @@ interface SearchResult {
 }
 
 interface KnowledgeSearchModalProps {
+  isOpen: boolean;
   onClose: () => void;
 }
 
-const KnowledgeSearchModal: React.FC<KnowledgeSearchModalProps> = ({ onClose }) => {
+const KnowledgeSearchModal: React.FC<KnowledgeSearchModalProps> = ({ isOpen, onClose }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,9 +48,15 @@ const KnowledgeSearchModal: React.FC<KnowledgeSearchModalProps> = ({ onClose }) 
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50">
-      <div className="bg-white rounded-[20px] shadow-2xl w-full max-w-3xl max-h-[70vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-[20vh] z-50"
+         onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[70vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-50 to-purple-50">
           <div className="flex items-center gap-3">
