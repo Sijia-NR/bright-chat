@@ -83,14 +83,26 @@ class ToolExecutionError(Exception):
 
 from typing import TypedDict
 
-class AgentState(TypedDict):
-    """Agent 状态类"""
+class AgentState(TypedDict, total=False):
+    """Agent 状态类（total=False 表示所有字段都是可选的）"""
+    # 核心字段
     messages: list
     input: str
     output: str
     tools_called: list
     steps: int
     error: str | None
+
+    # LLM 推理相关字段
+    reasoning: str | None              # LLM 推理链
+    tool_decision: dict | None         # 工具决策结果
+    should_continue: bool | None       # 是否继续循环
+    finished: bool | None              # 是否完成
+
+    # 内部配置字段（双下划线前缀）
+    __agent_config: dict | None        # Agent 配置
+    _config: dict | None               # 用户配置
+    _user_id: str | None               # 用户 ID
 
 
 # ==================== 辅助函数 ====================
@@ -108,6 +120,13 @@ def serialize_state(state: AgentState) -> dict:
             ]
         else:
             serialized[key] = value
+
+    # 🔍 调试：检查 reasoning 字段
+    if "reasoning" in state:
+        logger.info(f"🔍 [序列化] reasoning 原始值: '{state.get('reasoning', '')[:100] if state.get('reasoning') else '(空)'}'")
+    if "reasoning" in serialized:
+        logger.info(f"🔍 [序列化] reasoning 序列化后: '{serialized.get('reasoning', '')[:100] if serialized.get('reasoning') else '(空)'}'")
+
     return serialized
 
 
@@ -298,7 +317,8 @@ class AgentService:
         self,
         agent: Agent,
         user_id: str,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        runtime_knowledge_base_ids: Optional[List[str]] = None
     ) -> StateGraph:
         """
         创建 Agent 工作流图
@@ -307,18 +327,32 @@ class AgentService:
             agent: Agent 配置
             user_id: 用户 ID
             session_id: 会话 ID
+            runtime_knowledge_base_ids: 运行时传入的知识库 IDs（优先使用）
 
         Returns:
             LangGraph StateGraph
         """
         # 准备 Agent 配置
+        # 优先使用运行时传入的知识库ID，否则使用Agent配置的默认值
+        effective_knowledge_base_ids = (
+            runtime_knowledge_base_ids
+            if runtime_knowledge_base_ids is not None
+            else (agent.knowledge_base_ids or [])
+        )
+
+        logger.info(f"🔧 [工作流配置] 运行时知识库IDs: {runtime_knowledge_base_ids}")
+        logger.info(f"🔧 [工作流配置] Agent默认知识库IDs: {agent.knowledge_base_ids}")
+        logger.info(f"🔧 [工作流配置] 有效知识库IDs: {effective_knowledge_base_ids} (来源: {'运行时' if runtime_knowledge_base_ids else 'Agent默认'})")
+
         agent_config = {
             "agent_id": agent.id,
             "agent_type": agent.agent_type,
             "tools": agent.tools or [],
-            "knowledge_base_ids": agent.knowledge_base_ids or [],
+            "knowledge_base_ids": effective_knowledge_base_ids,
             "config": agent.config or {}
         }
+
+        logger.info(f"🔧 [工作流配置] agent_config['knowledge_base_ids']: {agent_config['knowledge_base_ids']}")
 
         # 创建带配置的闭包节点函数
         def make_think_node(agent_cfg, agent_service):
@@ -402,6 +436,8 @@ class AgentService:
                     }
 
                     logger.info(f"✅ [思考节点] LLM 推理完成,进入第 {new_state[STATE_STEPS]} 步")
+                    logger.info(f"✅ [思考节点] 存储 reasoning 到状态: '{new_state.get('reasoning', '')[:100]}...'")
+                    logger.info(f"✅ [思考节点] 状态键列表: {list(new_state.keys())}")
                     return new_state
 
                 except Exception as e:
@@ -436,6 +472,7 @@ class AgentService:
 
                 logger.info(f"🎬 [行动节点] 开始行动...")
                 logger.info(f"🎬 [行动节点] 可用工具: {available_tools}")
+                logger.info(f"🎬 [行动节点] 收到的状态键: {list(state.keys())}")
 
                 # 1. 获取 LLM 的决策
                 tool_decision = state.get("tool_decision", {})
@@ -443,16 +480,22 @@ class AgentService:
                 parameters = tool_decision.get("parameters", {})
                 reasoning = state.get("reasoning", "")
 
-                logger.info(f"🧠 [行动节点] LLM 推理: {reasoning[:100]}...")
+                logger.info(f"🧠 [行动节点] 获取 reasoning: '{reasoning[:100] if reasoning else '(空)'}'")
                 logger.info(f"🎯 [行动节点] LLM 决策工具: {tool_name}")
                 logger.info(f"🎯 [行动节点] 工具参数: {parameters}")
 
                 # 2. 如果没有选择工具,直接返回
                 if not tool_name:
                     logger.info("ℹ️  [行动节点] LLM 决定不使用工具,生成最终答案")
+                    # 生成友好的直接回复
+                    direct_answer = await self._generate_direct_answer(
+                        question=state.get(STATE_INPUT, ""),
+                        reasoning=reasoning,
+                        available_tools=available_tools
+                    )
                     return {
                         **state,
-                        STATE_OUTPUT: reasoning or "无法生成答案",
+                        STATE_OUTPUT: direct_answer,
                         "finished": True
                     }
 
@@ -819,6 +862,52 @@ class AgentService:
             "finished": False
         }
 
+    async def _generate_direct_answer(self, question: str, reasoning: str, available_tools: List[str]) -> str:
+        """
+        当不使用工具时，生成直接的友好回复
+
+        Args:
+            question: 用户问题
+            reasoning: LLM 推理内容
+            available_tools: 可用工具列表
+
+        Returns:
+            友好的回复
+        """
+        logger.info(f"💬 [直接回答] 生成友好回复")
+        logger.info(f"💬 [直接回答] 问题: {question[:50]}...")
+        logger.info(f"💬 [直接回答] 推理: {reasoning[:100] if reasoning else '(空)'}...")
+
+        # 场景 1: 问候类问题
+        if any(keyword in question for keyword in ["你好", "hello", "hi", "嗨", "您好"]):
+            return "你好！有什么我可以帮助你的吗？"
+
+        # 场景 2: 包含 reasoning 的友好回复
+        if reasoning and "打招呼" in reasoning:
+            return "你好！很高兴见到你，有什么我可以帮助你的吗？"
+        elif reasoning and "问候" in reasoning:
+            return "你好！有什么我可以帮到你的吗？"
+
+        # 场景 3: 推理中有明确说明
+        if reasoning and "可以直接回答" in reasoning:
+            return f"关于「{question}」这个问题，我理解了。由于我没有配置相关的工具（如{', '.join(available_tools)}），暂时无法提供更详细的信息。如果你有具体的问题，比如需要计算、查询时间或搜索知识库，我可以尝试帮助你。"
+
+        # 场景 4: 工具不可用但推理说明需要工具
+        if reasoning and "需要使用" in reasoning:
+            # 提取需要的工具名称
+            import re
+            tool_match = re.search(r'需要使用(\w+)工具', reasoning)
+            if tool_match:
+                needed_tool = tool_match.group(1)
+                return f"我理解你想进行{needed_tool}操作，但我当前没有配置这个工具。我可用的工具有：{', '.join(available_tools)}。你可以尝试使用这些工具，或者重新表述你的问题。"
+
+        # 场景 5: 默认友好回复
+        if available_tools:
+            tools_desc = ", ".join(available_tools)
+            return f"我收到你的问题了。我当前可以使用以下工具：{tools_desc}。请尝试提出与这些工具相关的问题，我会尽力帮助你。"
+        else:
+            return "我收到你的问题了，但目前我还没有配置任何工具来协助回答问题。"
+
     async def _generate_final_answer(self, state: AgentState) -> str:
         """
         基于所有工具调用结果,生成最终答案
@@ -834,11 +923,21 @@ class AgentService:
         reasoning = state.get("reasoning", "")
 
         logger.info(f"📝 [生成最终答案] 工具调用数: {len(tools_called)}")
+        logger.info(f"📝 [生成最终答案] reasoning 内容: '{reasoning[:200] if reasoning else '(空)'}'")
 
         # 如果没有调用任何工具,使用推理结果
         if not tools_called:
             logger.info(f"📝 [生成最终答案] 无工具调用,使用推理结果")
-            return reasoning or "我无法回答这个问题。"
+            # 如果 reasoning 为空或只是推理过程，生成友好回复
+            if not reasoning:
+                logger.warning("⚠️ [生成最终答案] reasoning 为空，使用默认回复")
+                return "我收到你的问题了，但目前无法提供具体答案。"
+            elif "打招呼" in reasoning or "问候" in reasoning:
+                return "你好！有什么我可以帮助你的吗？"
+            elif "可以直接回答" in reasoning:
+                return f"关于「{original_question}」这个问题，我理解了你的意思，但暂时没有更多信息可以提供。"
+            else:
+                return reasoning
 
         # 如果只有一个工具,直接格式化结果
         if len(tools_called) == 1:
@@ -1103,7 +1202,8 @@ class AgentService:
         agent: Agent,
         query: str,
         user_id: str,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        runtime_knowledge_base_ids: Optional[List[str]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行 Agent 任务（流式输出）
@@ -1113,6 +1213,7 @@ class AgentService:
             query: 用户查询
             user_id: 用户 ID
             session_id: 会话 ID
+            runtime_knowledge_base_ids: 运行时选择的知识库ID列表（可选，优先级高于Agent配置）
 
         Yields:
             执行步骤的事件
@@ -1139,13 +1240,47 @@ class AgentService:
 
         try:
 
+            # ✅ 初始化 LLM Reasoner（加载模型配置）
+            logger.info("🔧 [LLM Reasoner] 初始化模型配置...")
+            logger.info(f"🔍 [DEBUG] reasoner 存在: {self.reasoner is not None}")
+            if self.reasoner:
+                logger.info(f"🔍 [DEBUG] _model_config: {self.reasoner._model_config}")
+
+            from app.core.database import get_db
+            db_gen = get_db()
+            db = next(db_gen)
+
+            try:
+                if self.reasoner and self.reasoner._model_config is None:
+                    logger.info("🔄 [LLM Reasoner] 开始加载模型配置...")
+                    init_success = await self.reasoner.initialize(db)
+                    if init_success:
+                        logger.info("✅ [LLM Reasoner] 模型配置加载成功")
+                        logger.info(f"✅ [LLM Reasoner] 模型: {self.reasoner._model_config['display_name'] if self.reasoner._model_config else 'N/A'}")
+                    else:
+                        logger.warning("⚠️  [LLM Reasoner] 模型配置加载失败，将使用规则引擎降级")
+                else:
+                    if self.reasoner and self.reasoner._model_config:
+                        logger.info("✅ [LLM Reasoner] 模型已配置，跳过初始化")
+                    else:
+                        logger.warning("⚠️  [LLM Reasoner] reasoner 不可用")
+            finally:
+                db.close()
+
             # 配置（必须在 state 之前定义）
+            # 优先使用运行时传入的知识库ID，否则使用Agent配置的默认值
+            effective_knowledge_base_ids = (
+                runtime_knowledge_base_ids
+                if runtime_knowledge_base_ids is not None
+                else (agent.knowledge_base_ids or [])
+            )
+
             config = {
                 "agent_config": {
                     "agent_id": agent.id,
                     "agent_type": agent.agent_type,
                     "tools": agent.tools or [],
-                    "knowledge_base_ids": agent.knowledge_base_ids or [],
+                    "knowledge_base_ids": effective_knowledge_base_ids,
                     "config": agent.config or {}
                 },
                 "user_id": user_id,
@@ -1153,7 +1288,7 @@ class AgentService:
             }
 
             logger.info(f"🔧 [配置] 工具列表: {config['agent_config']['tools']}")
-            logger.info(f"🔧 [配置] 知识库IDs: {config['agent_config']['knowledge_base_ids']}")
+            logger.info(f"🔧 [配置] 知识库IDs: {config['agent_config']['knowledge_base_ids']} (来源: {'运行时' if runtime_knowledge_base_ids else 'Agent默认'})")
             logger.info(f"🔧 [配置] Agent配置: {config['agent_config']['config']}")
 
             # 初始化状态
@@ -1169,7 +1304,12 @@ class AgentService:
 
             # 创建并执行工作流
             logger.info("🏗️  [工作流] 创建 Agent 工作流图...")
-            graph = await self.create_agent_graph(agent, user_id, session_id)
+            graph = await self.create_agent_graph(
+                agent=agent,
+                user_id=user_id,
+                session_id=session_id,
+                runtime_knowledge_base_ids=runtime_knowledge_base_ids
+            )
             logger.info("✅ [工作流] 工作流图创建完成")
 
             # 发送开始事件

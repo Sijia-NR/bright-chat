@@ -1,4 +1,3 @@
-
 from sqlalchemy import Column, String, DateTime, Boolean, Integer, Text, Enum, ForeignKey, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -8,13 +7,7 @@ from datetime import datetime
 import enum
 import uuid
 
-# Import database base from parent directory
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from database import Base
-from user import User
+from ..core.database import Base
 
 
 class ModelType(str, enum.Enum):

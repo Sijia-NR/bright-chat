@@ -10,6 +10,22 @@ from ..core.config import settings
 from ..models.ias import IASChatRequest, IASChatResponse, IASChoice
 
 
+class StreamingResponseWrapper:
+    """包装 httpx 响应以提供 aiter_lines 方法"""
+
+    def __init__(self, response: httpx.Response):
+        self._response = response
+
+    async def aiter_lines(self):
+        """异步迭代响应行"""
+        async for line in self._response.aiter_lines():
+            yield line
+
+    def __getattr__(self, name):
+        """代理其他属性到原始响应"""
+        return getattr(self._response, name)
+
+
 class IASProxyService:
     def __init__(self):
         self.base_url = settings.IAS_BASE_URL
@@ -47,17 +63,25 @@ class IASProxyService:
         for attempt in range(self.max_retries):
             try:
                 async with self.get_client() as client:
-                    response = client.request(
-                        method,
-                        url,
-                        json=json_data,
-                        headers=headers,
-                        stream=stream
-                    )
+                    # 构建请求参数
+                    request_kwargs = {
+                        "method": method,
+                        "url": url,
+                        "headers": headers
+                    }
 
+                    if json_data:
+                        request_kwargs["json"] = json_data
+
+                    # httpx 不支持 stream 作为关键字参数，需要使用 build_request 方法
                     if stream:
-                        return response
+                        # 对于流式请求，使用流式上下文管理器
+                        async with client.stream(**request_kwargs) as response:
+                            # 返回一个包装的响应对象，支持 aiter_lines
+                            return StreamingResponseWrapper(response)
                     else:
+                        # 对于非流式请求，需要 await
+                        response = await client.request(**request_kwargs)
                         response.raise_for_status()
                         return response.json()
 

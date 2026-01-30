@@ -63,6 +63,9 @@ class Agent(Base):
     knowledge_base_ids = Column(JSON, nullable=True)
     tools = Column(JSON, nullable=True)
     config = Column(JSON, nullable=True)
+    llm_model_id = Column(String(36), ForeignKey("llm_models.id", ondelete="SET NULL"), nullable=True)
+    enable_knowledge = Column(Boolean, default=True, nullable=False)
+    order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True)
     created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=func.now())
@@ -146,6 +149,9 @@ class AgentCreate(BaseModel):
     knowledge_base_ids: Optional[List[str]] = None
     tools: Optional[List[str]] = None
     config: Optional[Dict[str, Any]] = None
+    llm_model_id: Optional[str] = None
+    enable_knowledge: bool = True
+    order: Optional[int] = None
 
     @field_validator('name')
     @classmethod
@@ -162,6 +168,13 @@ class AgentCreate(BaseModel):
     def validate_config_field(cls, v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         return validate_agent_config(v)
 
+    @field_validator('order')
+    @classmethod
+    def validate_order_field(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("order 必须大于等于 0")
+        return v
+
 
 class AgentUpdate(BaseModel):
     """更新 Agent 请求"""
@@ -172,7 +185,17 @@ class AgentUpdate(BaseModel):
     knowledge_base_ids: Optional[List[str]] = None
     tools: Optional[List[str]] = None
     config: Optional[Dict[str, Any]] = None
+    llm_model_id: Optional[str] = None
+    enable_knowledge: Optional[bool] = None
+    order: Optional[int] = None
     is_active: Optional[bool] = None
+
+    @field_validator('order')
+    @classmethod
+    def validate_order_field(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("order 必须大于等于 0")
+        return v
 
 
 class AgentResponse(BaseModel):
@@ -186,6 +209,10 @@ class AgentResponse(BaseModel):
     knowledge_base_ids: Optional[List[str]] = None
     tools: Optional[List[str]] = None
     config: Optional[Dict[str, Any]] = None
+    llm_model_id: Optional[str] = None
+    llm_model_name: Optional[str] = None
+    enable_knowledge: bool = True
+    order: int = 0
     is_active: bool
     created_by: Optional[str] = None
     created_at: datetime
@@ -200,6 +227,7 @@ class AgentChatRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     stream: bool = True
+    knowledge_base_ids: Optional[List[str]] = None  # 运行时选择的知识库ID列表（可选）
 
     @field_validator('query')
     @classmethod
@@ -313,3 +341,31 @@ PREDEFINED_TOOLS = [
         }
     ),
 ]
+
+
+# ==================== 统一 API 响应模型 ====================
+
+class APIResponse(BaseModel):
+    """统一 API 响应格式"""
+    success: bool = True
+    data: Optional[Any] = None
+    error: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
+class AgentListResponse(BaseModel):
+    """Agent 列表响应（带分页）"""
+    agents: List[AgentResponse]
+    total: int
+    page: int
+    limit: int
+    has_more: bool
+
+
+class AgentExecutionListResponse(BaseModel):
+    """Agent 执行历史列表响应（带分页）"""
+    executions: List[AgentExecutionResponse]
+    total: int
+    page: int
+    limit: int
+    has_more: bool
