@@ -66,13 +66,6 @@ const SessionTrailSection: React.FC<SessionTrailSectionProps> = ({
                     )}
 
                     <span className="truncate flex-1">{session.title}</span>
-
-                    {/* Agent 标签 */}
-                    {agent && (
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 bg-blue-100 text-blue-600`}>
-                        {agent.display_name || agent.name}
-                      </span>
-                    )}
                   </div>
 
                   <button
