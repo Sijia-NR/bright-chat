@@ -104,6 +104,12 @@ class AgentState(TypedDict, total=False):
     _config: dict | None               # 用户配置
     _user_id: str | None               # 用户 ID
 
+    # ✨ 规划相关字段（Phase 1: 任务规划器）
+    execution_plan: Any | None         # ExecutionPlan 对象
+    current_subtask: Any | None        # 当前执行的 SubTask
+    subtask_index: int | None          # 当前子任务索引
+    plan_validated: bool | None        # 计划是否已验证
+
 
 # ==================== 辅助函数 ====================
 
@@ -118,6 +124,19 @@ def serialize_state(state: AgentState) -> dict:
                 if hasattr(msg, 'content') else str(msg)
                 for msg in value
             ]
+        elif key == "execution_plan" and value is not None:
+            # ✨ 序列化 ExecutionPlan 对象
+            if hasattr(value, 'to_dict'):
+                serialized[key] = value.to_dict()
+            else:
+                # Fallback: 如果没有 to_dict 方法，转换为字符串
+                serialized[key] = str(value)
+        elif key == "current_subtask" and value is not None:
+            # ✨ 序列化 SubTask 对象
+            if hasattr(value, 'to_dict'):
+                serialized[key] = value.to_dict()
+            else:
+                serialized[key] = str(value)
         else:
             serialized[key] = value
 
@@ -389,6 +408,29 @@ class AgentService:
                         "finished": True
                     }
 
+                # 1.5. ✨ 更新子任务索引（如果有多任务计划）
+                execution_plan = state.get("execution_plan")
+                current_index = state.get("subtask_index", 0)
+
+                if execution_plan and len(execution_plan.subtasks) > 1:
+                    # 检查是否需要切换到下一个子任务
+                    # 逻辑：如果已经执行过工具（tools_called 不为空），则检查是否完成当前子任务
+                    tools_called = state.get(STATE_TOOLS_CALLED, [])
+
+                    if tools_called and current_index < len(execution_plan.subtasks) - 1:
+                        # 简化逻辑：每次循环都切换到下一个子任务
+                        # 更复杂的实现可以根据工具执行结果来判断
+                        next_index = current_index + 1
+                        logger.info(f"📋 [思考节点] 切换到子任务 {next_index + 1}/{len(execution_plan.subtasks)}")
+                        logger.info(f"📋 [思考节点] 子任务描述: {execution_plan.subtasks[next_index].description}")
+
+                        # 更新状态中的子任务索引和当前子任务
+                        state = {
+                            **state,
+                            "subtask_index": next_index,
+                            "current_subtask": execution_plan.subtasks[next_index]
+                        }
+
                 # 2. ✅ 使用 LLM 进行推理
                 if agent_service.reasoner is None:
                     logger.error("❌ LLMReasoner 未初始化,无法推理")
@@ -509,6 +551,43 @@ class AgentService:
                         "finished": True
                     }
 
+                # 3.5. 🔧 参数增强和修复（针对 browser 工具）
+                if tool_name == "browser":
+                    input_text = state.get(STATE_INPUT, "")
+                    logger.info(f"🔧 [参数增强] 检测到 browser 工具，进行参数增强")
+                    logger.info(f"🔧 [参数增强] 原始参数: {parameters}")
+                    logger.info(f"🔧 [参数增强] 用户输入: {input_text[:100]}...")
+
+                    import re
+
+                    # 如果缺少 action 参数，尝试从用户输入推断
+                    if "action" not in parameters:
+                        # 检查是否包含 URL
+                        url_match = re.search(r'https?://[^\s]+', input_text)
+                        if url_match:
+                            parameters["action"] = "scrape"
+                            parameters["url"] = url_match.group(0)
+                            logger.info(f"🔧 [参数增强] 推断 action=scrape, url={parameters['url']}")
+                        # 检查是否是搜索请求
+                        elif any(kw in input_text for kw in ["搜索", "search", "查找"]):
+                            parameters["action"] = "search"
+                            parameters["text"] = input_text
+                            logger.info(f"🔧 [参数增强] 推断 action=search")
+                        # 默认使用 navigate
+                        else:
+                            parameters["action"] = "navigate"
+                            parameters["url"] = "https://www.google.com"
+                            logger.info(f"🔧 [参数增强] 使用默认 action=navigate")
+
+                    # 确保必要的参数存在
+                    if parameters.get("action") == "scrape" and "url" not in parameters:
+                        url_match = re.search(r'https?://[^\s]+', input_text)
+                        if url_match:
+                            parameters["url"] = url_match.group(0)
+                            logger.info(f"🔧 [参数增强] 补充 url: {parameters['url']}")
+
+                    logger.info(f"🔧 [参数增强] 增强后参数: {parameters}")
+
                 # 4. 执行工具
                 try:
                     logger.info(f"⚙️  [行动节点] 开始执行工具: {tool_name}...")
@@ -557,17 +636,78 @@ class AgentService:
 
             return act_node
 
+        def make_plan_node(agent_cfg, agent_service):
+            """
+            创建规划节点
+
+            Args:
+                agent_cfg: Agent 配置
+                agent_service: AgentService 实例
+            """
+            async def plan_node(state: AgentState) -> AgentState:
+                """规划节点：将复杂任务分解为子任务"""
+                from .planner import TaskPlanner
+
+                query = state.get(STATE_INPUT, "")
+                available_tools = agent_cfg.get("tools", [])
+
+                logger.info(f"📋 [规划节点] 开始分析查询: {query[:100]}...")
+
+                try:
+                    # 创建规划器
+                    planner = TaskPlanner(agent_service.reasoner)
+
+                    # 生成执行计划
+                    execution_plan = await planner.create_plan(
+                        query=query,
+                        available_tools=available_tools,
+                        agent_config=agent_cfg
+                    )
+
+                    logger.info(f"✅ [规划节点] 计划创建完成")
+                    logger.info(f"   - 复杂度: {'复杂' if not execution_plan.is_simple else '简单'}")
+                    logger.info(f"   - 子任务数: {len(execution_plan.subtasks)}")
+                    logger.info(f"   - 预计时长: {execution_plan.estimated_duration}秒")
+                    logger.info(f"   - 置信度: {execution_plan.confidence_score:.2f}")
+
+                    # 返回新状态（不可变更新）
+                    return {
+                        **state,
+                        "execution_plan": execution_plan,
+                        "current_subtask": execution_plan.subtasks[0] if execution_plan.subtasks else None,
+                        "subtask_index": 0,
+                        "plan_validated": True
+                    }
+
+                except Exception as e:
+                    logger.error(f"❌ [规划节点] 规划失败: {e}")
+                    logger.error(f"❌ [规划节点] 错误详情: {traceback.format_exc()}")
+                    # Fallback: 直接执行（单任务模式）
+                    logger.info("⬇️ [规划节点] 降级到单任务模式")
+                    return {
+                        **state,
+                        "execution_plan": None,
+                        "current_subtask": None,
+                        "subtask_index": 0,
+                        "plan_validated": False
+                    }
+
+            return plan_node
+
         workflow = StateGraph(AgentState)
 
         # 添加节点（使用闭包捕获配置）- ✅ 传入 self (AgentService 实例)
+        workflow.add_node("plan", make_plan_node(agent_config, self))
         workflow.add_node(NODE_THINK, make_think_node(agent_config, self))
         workflow.add_node(NODE_ACT, make_act_node(agent_config, user_id, self))
         workflow.add_node(NODE_OBSERVE, self._observe_node)
 
-        # 设置入口
-        workflow.set_entry_point(NODE_THINK)
+        # 设置入口（✨ 改为从 plan 开始）
+        workflow.set_entry_point("plan")
 
         # 添加边
+        # Plan 节点后：总是去 Think 节点
+        workflow.add_edge("plan", NODE_THINK)
         # Think 节点后：总是去 Act 节点
         workflow.add_conditional_edges(
             NODE_THINK,
@@ -702,6 +842,11 @@ class AgentService:
         # 优先级 1: 检查代码执行（需要明确的前缀）
         if "code_executor" in available_tools:
             import re
+
+            # ✅ 新增：检测用户明确要求使用代码的关键词
+            code_explicit_keywords = ["使用代码", "执行代码", "用代码", "代码执行", "python代码", "运行代码"]
+            has_explicit_code_request = any(kw in input_text for kw in code_explicit_keywords)
+
             # 检查是否有明确的代码执行前缀
             code_prefix_patterns = [
                 r'^执行代码[：:]\s*',
@@ -718,6 +863,19 @@ class AgentService:
 
             # 检查是否有代码关键词（不包括纯"计算"，因为可能是指数学计算）
             has_code_keyword = any(kw in input_text for kw in ("执行", "运行", "代码", "python", "程序"))
+
+            # ✅ 优先级调整：明确请求使用代码 > 代码前缀 > 代码块 > 代码关键词
+            if has_explicit_code_request:
+                logger.info(f"🎯 [工具决策] 用户明确要求使用代码: {input_text[:50]}...")
+                # 提取数学表达式（如果有）
+                expr_match = re.search(r'(\d+(?:\s*[\*\+\-\/]\s*\d+)+)', input_text)
+                if expr_match:
+                    expression = expr_match.group(1)
+                    code = f"print({expression})"
+                    logger.info(f"🎯 [工具决策] 提取表达式: {expression}")
+                else:
+                    code = input_text
+                return "code_executor", {"code": code}
 
             if has_code_prefix or has_code_block or (has_code_keyword and "计算" not in input_text.split()[0] if input_text else False):
                 # 提取代码部分
@@ -939,62 +1097,142 @@ class AgentService:
             else:
                 return reasoning
 
-        # 如果只有一个工具,直接格式化结果
-        if len(tools_called) == 1:
-            logger.info(f"📝 [生成最终答案] 单工具结果")
-            return self._format_tool_output(tools_called[0])
-
-        # 多个工具: 使用 LLM 生成综合答案
-        logger.info(f"📝 [生成最终答案] 多工具综合答案")
+        # ✅ 修复：无论是单个工具还是多个工具，都使用 LLM 生成最终答案
+        logger.info(f"📝 [生成最终答案] 使用 LLM 生成最终答案，工具调用数: {len(tools_called)}")
 
         # 构建提示词
-        prompt = f"""基于以下工具调用结果,请生成一个完整、准确的答案来回答用户问题。
+        prompt = f"""你是智能助手，需要基于工具调用结果，生成一个清晰、准确、友好的答案来回答用户问题。
 
 ## 用户原始问题
 
 {original_question}
 
-## 工具调用过程
+## 工具调用结果
 
 """
 
         for i, call in enumerate(tools_called, 1):
-            prompt += f"\n### 步骤 {i}\n"
-            prompt += f"推理: {call.get('reasoning', '无')}\n"
-            prompt += f"工具: {call['tool']}\n"
-            prompt += f"参数: {call['parameters']}\n"
-            prompt += f"结果: {str(call['result'])[:500]}\n"
+            tool_name = call.get('tool', 'unknown')
+            result = call.get('result', {})
 
-        prompt += """
-## 任务
+            # 根据工具类型格式化结果
+            if tool_name == "browser":
+                action = call.get('parameters', {}).get('action', 'unknown')
+                if action == "scrape":
+                    data = result.get('data', {}) if isinstance(result, dict) else {}
+                    title = data.get('title', '')
+                    content = data.get('content', '')
+                    prompt += f"### 工具 {i}: 浏览器抓取\n"
+                    prompt += f"- 操作: 抓取网页内容\n"
+                    prompt += f"- 网页标题: {title}\n"
+                    prompt += f"- 网页内容: {content[:3000]}\n\n"
+                elif action == "search":
+                    data = result.get('data', {}) if isinstance(result, dict) else {}
+                    results = data.get('results', [])
+                    prompt += f"### 工具 {i}: 浏览器搜索\n"
+                    prompt += f"- 搜索结果数: {len(results)}\n"
+                    for r in results[:5]:
+                        prompt += f"  - {r.get('rank')}. {r.get('title')}\n"
+                    prompt += "\n"
 
-请综合以上所有步骤的结果,生成一个清晰、准确的最终答案。
+            elif tool_name == "knowledge_search":
+                if isinstance(result, dict):
+                    context = result.get('context', '')
+                    prompt += f"### 工具 {i}: 知识库搜索\n"
+                    prompt += f"- 搜索结果: {context[:3000]}\n\n"
+                else:
+                    prompt += f"### 工具 {i}: 知识库搜索\n"
+                    prompt += f"- 搜索结果: {str(result)[:3000]}\n\n"
 
-要求:
-1. 答案应该直接回答用户的问题
-2. 如果涉及计算,给出具体数值
-3. 如果涉及搜索,引用关键信息
-4. 使用简洁易懂的语言
+            elif tool_name == "calculator":
+                prompt += f"### 工具 {i}: 计算器\n"
+                prompt += f"- 计算结果: {result}\n\n"
 
-请生成最终答案:"""
+            elif tool_name == "datetime":
+                prompt += f"### 工具 {i}: 日期时间\n"
+                prompt += f"- 当前时间: {result}\n\n"
+
+            elif tool_name == "code_executor":
+                if isinstance(result, dict):
+                    if result.get('success'):
+                        output = result.get('output', '')
+                        exec_time = result.get('execution_time', 0)
+                        prompt += f"### 工具 {i}: 代码执行\n"
+                        prompt += f"- 执行成功\n"
+                        prompt += f"- 执行时间: {exec_time:.2f}秒\n"
+                        prompt += f"- 输出结果: {output[:2000]}\n\n"
+                    else:
+                        error = result.get('error', '未知错误')
+                        prompt += f"### 工具 {i}: 代码执行\n"
+                        prompt += f"- 执行失败: {error}\n\n"
+
+            else:
+                prompt += f"### 工具 {i}: {tool_name}\n"
+                prompt += f"- 结果: {str(result)[:3000]}\n\n"
+
+        prompt += f"""
+## 任务要求
+
+请基于以上工具调用结果，生成最终的答案给用户。
+
+重要要求：
+1. **理解用户意图**：用户想要什么？（总结、解释、提取信息等）
+2. **准确引用**：基于工具结果，不要编造
+3. **简洁明了**：用自然语言总结，不要堆砌原始数据
+4. **结构化**：使用段落、列表等格式让答案更易读
+5. **友好语气**：像对话一样自然，不要像机器人
+
+## 答案格式
+
+- 如果是网页抓取：先总结网页主题，再提取关键信息
+- 如果是知识库搜索：直接回答问题，引用相关内容
+- 如果是计算：给出答案和简要说明
+- 如果是代码执行：解释代码做了什么，给出结果
+
+请生成最终答案（直接输出答案，不要有前缀）:"""
 
         try:
-            if self.reasoner and self.reasoner.llm:
-                response = await self.reasoner.llm.ainvoke(prompt)
-                answer = response.content.strip()
-                logger.info(f"✅ [生成最终答案] LLM 综合答案生成完成")
-                return answer
+            # 调用 LLM 生成最终答案
+            if self.reasoner:
+                # 直接调用 LLM API
+                from .llm_reasoner import LLMReasoner
+                temp_reasoner = LLMReasoner(llm_model_id=self.reasoner.llm_model_id)
+
+                # 从数据库获取配置
+                from ..core.database import get_db
+                db_gen = get_db()
+                db = next(db_gen)
+                try:
+                    await temp_reasoner.initialize(db)
+
+                    # 使用内部方法调用 LLM
+                    response = await temp_reasoner._call_llm(
+                        prompt=prompt,
+                        question=original_question,
+                        agent_config={},
+                        has_knowledge_base=False
+                    )
+
+                    logger.info(f"✅ [生成最终答案] LLM 答案生成完成，长度: {len(response)} 字符")
+                    return response
+                finally:
+                    db.close()
+            else:
+                logger.warning("⚠️ [生成最终答案] reasoner 不可用")
         except Exception as e:
             logger.error(f"❌ [生成最终答案] LLM 生成失败: {e}")
+            logger.error(f"❌ [生成最终答案] 错误详情: {str(e)}")
 
-        # 降级: 简单拼接结果
-        logger.warning(f"⚠️ [生成最终答案] 使用降级方案(拼接结果)")
-        results = []
-        for call in tools_called:
-            formatted = self._format_tool_output(call)
-            results.append(f"步骤 {call.get('step', '?')}: {formatted}")
-
-        return "基于以上工具调用结果:\n\n" + "\n\n".join(results)
+        # 降级方案：格式化工具输出
+        logger.warning(f"⚠️ [生成最终答案] 使用降级方案(格式化输出)")
+        if len(tools_called) == 1:
+            return self._format_tool_output(tools_called[0])
+        else:
+            results = []
+            for call in tools_called:
+                formatted = self._format_tool_output(call)
+                results.append(f"步骤 {call.get('step', '?')}: {formatted}")
+            return "基于以上工具调用结果:\n\n" + "\n\n".join(results)
 
     def _format_tool_output(self, tool_call: Dict[str, Any]) -> str:
         """格式化工具输出"""
@@ -1013,16 +1251,28 @@ class AgentService:
                 # 检查是否有 context 字段
                 if "context" in result:
                     context = result["context"]
-                    return f"根据知识库搜索结果：\n\n{context[:500]}..."
+                    max_length = 2000
+                    if len(context) > max_length:
+                        return f"根据知识库搜索结果：\n\n{context[:max_length]}...\n\n(结果已截断，完整长度: {len(context)} 字符)"
+                    else:
+                        return f"根据知识库搜索结果：\n\n{context}"
                 # 检查是否有 error 字段
                 elif "error" in result:
                     return f"知识库检索失败: {result['error']}"
                 else:
                     # 其他字典格式，转为字符串
-                    return f"知识库搜索结果: {str(result)[:500]}..."
+                    result_str = str(result)
+                    if len(result_str) > 2000:
+                        return f"知识库搜索结果: {result_str[:2000]}...\n\n(结果已截断，完整长度: {len(result_str)} 字符)"
+                    else:
+                        return f"知识库搜索结果: {result_str}"
             else:
                 # result 是字符串或其他类型
-                return f"知识库搜索结果: {str(result)[:500]}..."
+                result_str = str(result)
+                if len(result_str) > 2000:
+                    return f"知识库搜索结果: {result_str[:2000]}...\n\n(结果已截断，完整长度: {len(result_str)} 字符)"
+                else:
+                    return f"知识库搜索结果: {result_str}"
 
         if tool_name == "code_executor":
             # 代码执行结果
@@ -1030,7 +1280,13 @@ class AgentService:
                 if result.get("success"):
                     output = result.get("output", "执行完成")
                     exec_time = result.get("execution_time", 0)
-                    return f"代码执行成功（耗时: {exec_time:.2f}秒）：\n\n{output[:500]}..."
+                    # ✅ 修复：只在输出真正被截断时才添加 "..." 后缀
+                    max_output_length = 2000  # 提高输出长度限制
+                    if len(output) > max_output_length:
+                        truncated_output = output[:max_output_length]
+                        return f"代码执行成功（耗时: {exec_time:.2f}秒）：\n\n{truncated_output}...\n\n(输出已截断，完整长度: {len(output)} 字符)"
+                    else:
+                        return f"代码执行成功（耗时: {exec_time:.2f}秒）：\n\n{output}"
                 else:
                     error = result.get("error", "未知错误")
                     return f"代码执行失败: {error}"
@@ -1051,8 +1307,13 @@ class AgentService:
                         )
                     elif action == "scrape":
                         title = data.get("title", "")
+                        content = data.get("content", "")
                         content_len = data.get("content_length", 0)
-                        return f"页面抓取成功: {title}\n内容长度: {content_len} 字符\n\n{data.get('content', '')[:300]}..."
+                        max_length = 2000
+                        if len(content) > max_length:
+                            return f"页面抓取成功: {title}\n内容长度: {content_len} 字符\n\n{content[:max_length]}...\n\n(内容已截断)"
+                        else:
+                            return f"页面抓取成功: {title}\n内容长度: {content_len} 字符\n\n{content}"
                     else:
                         return f"浏览器操作完成: {action}"
                 else:
@@ -1069,7 +1330,11 @@ class AgentService:
 
                     if action == "read":
                         content = data.get("content", "")
-                        return f"文件读取成功 ({data.get('size', 0)} 字符):\n\n{content[:500]}..."
+                        max_length = 2000
+                        if len(content) > max_length:
+                            return f"文件读取成功 ({data.get('size', 0)} 字符):\n\n{content[:max_length]}...\n\n(内容已截断，完整长度: {len(content)} 字符)"
+                        else:
+                            return f"文件读取成功 ({data.get('size', 0)} 字符):\n\n{content}"
                     elif action == "write":
                         return f"文件保存成功: {data.get('path')}\n大小: {data.get('size', 0)} 字符"
                     elif action == "list":
@@ -1088,7 +1353,14 @@ class AgentService:
         return str(result)[:500]
 
     def _should_continue(self, state: AgentState) -> str:
-        """Observe 节点后的条件判断：决定是否继续循环"""
+        """
+        Observe 节点后的条件判断：决定是否继续循环
+
+        ✨ Phase 1 增强：支持子任务切换
+        1. 检查是否还有更多子任务
+        2. 如果有，更新到下一个子任务并继续
+        3. 如果所有子任务完成，结束执行
+        """
         # 如果有错误或输出，结束
         if state.get(STATE_ERROR) or state.get(STATE_OUTPUT):
             return "end"
@@ -1097,8 +1369,34 @@ class AgentService:
         if state.get(STATE_STEPS, 0) >= DEFAULT_MAX_STEPS:
             return "end"
 
-        # 否则回到 Think 节点，开始新一轮循环
-        return NODE_THINK
+        # ✨ 新增：检查是否还有更多子任务
+        execution_plan = state.get("execution_plan")
+        current_index = state.get("subtask_index", 0)
+
+        if execution_plan and len(execution_plan.subtasks) > 1:
+            # 多任务计划
+            if current_index < len(execution_plan.subtasks) - 1:
+                # 还有更多子任务
+                next_index = current_index + 1
+                logger.info(f"📋 [子任务切换] {current_index + 1}/{len(execution_plan.subtasks)} → {next_index + 1}/{len(execution_plan.subtasks)}")
+                logger.info(f"📋 [子任务切换] 下一个任务: {execution_plan.subtasks[next_index].description}")
+
+                # 注意：这里不能直接修改 state，需要在下一轮 Think 节点中处理
+                # 但由于 LangGraph 的限制，我们需要在这里通过某种方式传递状态
+                # 暂时先返回继续，在 Think 节点中检查并更新子任务索引
+                return NODE_THINK
+            else:
+                # 所有子任务完成
+                logger.info(f"✅ [子任务完成] 所有 {len(execution_plan.subtasks)} 个子任务已完成")
+                return "end"
+        else:
+            # 单任务计划或无计划
+            # 检查是否应该继续（基于 LLM 的 should_continue 决策）
+            should_continue = state.get("should_continue", False)
+            if should_continue:
+                return NODE_THINK
+            else:
+                return "end"
 
     def _after_think(self, state: AgentState) -> str:
         """Think 节点后的条件判断：总是去 Act 节点执行工具"""
@@ -1354,6 +1652,33 @@ class AgentService:
                         "state": serialize_state(node_state),
                         "timestamp": datetime.now().isoformat()
                     }
+
+                    # ✨ Phase 1: 推送执行计划事件 (plan 节点)
+                    if node_name == "plan":
+                        execution_plan = node_state.get("execution_plan")
+                        if execution_plan:
+                            logger.info(f"📋 [规划事件] 发送执行计划: {len(execution_plan.subtasks)} 个子任务")
+
+                            # 转换为前端可用的格式
+                            yield {
+                                "type": "plan",
+                                "execution_id": execution_id,
+                                "query": node_state.get(STATE_INPUT, ""),
+                                "complexity": "complex" if not execution_plan.is_simple else "simple",
+                                "subtasks": [
+                                    {
+                                        "id": task.id,
+                                        "description": task.description,
+                                        "objective": task.objective,
+                                        "priority": task.priority,
+                                        "estimated_steps": task.estimated_steps
+                                    }
+                                    for task in execution_plan.subtasks
+                                ],
+                                "estimated_duration": execution_plan.estimated_duration,
+                                "confidence": execution_plan.confidence_score,
+                                "timestamp": datetime.now().isoformat()
+                            }
 
                     # ✅ 新增: 推送推理事件 (如果有)
                     if node_name == NODE_THINK:
