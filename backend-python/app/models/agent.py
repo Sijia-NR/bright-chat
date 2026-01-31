@@ -80,12 +80,14 @@ class AgentExecution(Base):
     agent_id = Column(String(36), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     session_id = Column(String(36), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    message_id = Column("message_id", String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     input_prompt = Column(Text, nullable=False)
     status = Column(String(50), default=EXECUTION_STATUS_RUNNING)
     steps = Column(Integer, default=0)
     result = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     execution_log = Column(JSON, nullable=True)
+    reasoning_steps = Column("reasoning_steps", JSON, nullable=True)
     started_at = Column(DateTime, nullable=False, default=func.now())
     completed_at = Column(DateTime, nullable=True)
 
@@ -228,6 +230,7 @@ class AgentChatRequest(BaseModel):
     session_id: Optional[str] = None
     stream: bool = True
     knowledge_base_ids: Optional[List[str]] = None  # 运行时选择的知识库ID列表（可选）
+    message_id: Optional[str] = None  # 前端传入的用户消息ID，用于关联执行记录
 
     @field_validator('query')
     @classmethod
@@ -245,11 +248,13 @@ class AgentExecutionResponse(BaseModel):
     agent_id: str
     user_id: str
     session_id: Optional[str] = None
+    message_id: Optional[str] = None
     input_prompt: str
     status: str
     steps: int
     result: Optional[str] = None
     error_message: Optional[str] = None
+    reasoning_steps: Optional[List[Dict[str, Any]]] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
 

@@ -392,5 +392,78 @@ export const agentService = {
       console.error('获取 Agent 失败:', e);
       return null;
     }
+  },
+
+  /**
+   * 获取消息关联的 Agent 执行记录（含 reasoning_steps）
+   *
+   * 通过 message_id 精确查询对应的 Agent 执行记录，用于恢复历史思维链
+   */
+  async getMessageExecution(messageId: string): Promise<{
+    id: string;
+    message_id: string;
+    agent_id: string;
+    session_id: string;
+    status: string;
+    reasoning_steps?: Array<{
+      reasoning: string;
+      tool_decision?: {
+        tool: string | null;
+        parameters: Record<string, any>;
+        confidence: number;
+      };
+      step: number;
+      timestamp: string;
+    }>;
+    tool_calls: Array<{
+      tool: string;
+      parameters: Record<string, any>;
+      result: any;
+      timestamp: string;
+    }>;
+    steps: number;
+    result: string | null;
+    error_message?: string;
+    started_at: string;
+    completed_at: string | null;
+  } | null> {
+    if (CONFIG.USE_MOCK) {
+      // Mock 数据
+      return {
+        id: `exec-${messageId}`,
+        message_id: messageId,
+        agent_id: 'agent-1',
+        session_id: 'session-1',
+        status: 'completed',
+        reasoning_steps: [],
+        tool_calls: [],
+        steps: 1,
+        result: 'Mock result',
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString()
+      };
+    }
+
+    const response = await fetch(
+      `${CONFIG.API_BASE_URL}/agents/messages/${messageId}/execution`,
+      {
+        headers: getAuthHeaders()
+      }
+    );
+
+    // 404 表示没有执行记录（旧消息正常情况），返回 null
+    if (response.status === 404) {
+      console.log(`[AgentService] 消息 ${messageId} 没有执行记录（404），这是正常的`);
+      return null;
+    }
+
+    if (!response.ok) {
+      console.error(`[AgentService] 请求失败: ${response.status} ${response.statusText}`);
+      throw new Error(`获取执行记录失败: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log(`[AgentService] 成功获取执行记录:`, data.execution ? '有数据' : '无数据');
+    return data.execution || null;
   }
 };

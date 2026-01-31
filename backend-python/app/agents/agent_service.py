@@ -1300,12 +1300,54 @@ class AgentService:
         """Think 节点后的条件判断：总是去 Act 节点执行工具"""
         return NODE_ACT
 
+    async def _create_user_message(
+        self,
+        session_id: str,
+        user_id: str,
+        content: str
+    ) -> str:
+        """
+        创建用户消息并返回 message_id
+
+        Args:
+            session_id: 会话 ID
+            user_id: 用户 ID
+            content: 消息内容
+
+        Returns:
+            消息 ID
+        """
+        from app.models import Message
+
+        db = SessionLocal()
+        try:
+            message = Message(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="user",
+                content=content,
+                timestamp=datetime.now()
+            )
+
+            db.add(message)
+            db.commit()
+
+            logger.info(f"✅ [数据库] 创建用户消息: {message.id}")
+            return message.id
+        except Exception as e:
+            logger.error(f"❌ [数据库] 创建用户消息失败: {e}")
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     async def _create_execution_record(
         self,
         execution_id: str,
         agent_id: str,
         user_id: str,
         session_id: Optional[str],
+        message_id: str,
         query: str
     ) -> str:
         """
@@ -1316,6 +1358,7 @@ class AgentService:
             agent_id: Agent ID
             user_id: 用户 ID
             session_id: 会话 ID
+            message_id: 消息 ID
             query: 用户查询
 
         Returns:
@@ -1329,6 +1372,7 @@ class AgentService:
                 agent_id=agent_id,
                 user_id=user_id,
                 session_id=session_id,
+                message_id=message_id,
                 input_prompt=query,
                 status=EXECUTION_STATUS_RUNNING
             )
@@ -1346,7 +1390,8 @@ class AgentService:
     async def _update_execution_record(
         self,
         execution_id: str,
-        status: str,
+        reasoning_steps: Optional[List[Dict[str, Any]]] = None,
+        status: str = EXECUTION_STATUS_RUNNING,
         steps: Optional[int] = None,
         result: Optional[str] = None,
         execution_log: Optional[list] = None,
@@ -1357,6 +1402,7 @@ class AgentService:
 
         Args:
             execution_id: 执行ID
+            reasoning_steps: 推理步骤列表
             status: 执行状态
             steps: 执行步数
             result: 执行结果
@@ -1371,6 +1417,11 @@ class AgentService:
             ).first()
 
             if execution:
+                # 保存 reasoning_steps
+                if reasoning_steps is not None:
+                    execution.reasoning_steps = reasoning_steps
+                    logger.info(f"✅ [数据库] 保存 {len(reasoning_steps)} 条推理步骤")
+
                 execution.status = status
                 if steps is not None:
                     execution.steps = steps
@@ -1399,7 +1450,8 @@ class AgentService:
         query: str,
         user_id: str,
         session_id: Optional[str] = None,
-        runtime_knowledge_base_ids: Optional[List[str]] = None
+        runtime_knowledge_base_ids: Optional[List[str]] = None,
+        message_id: Optional[str] = None  # 新增：前端传入的用户消息ID
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行 Agent 任务（流式输出）
@@ -1410,6 +1462,7 @@ class AgentService:
             user_id: 用户 ID
             session_id: 会话 ID
             runtime_knowledge_base_ids: 运行时选择的知识库ID列表（可选，优先级高于Agent配置）
+            message_id: 用户消息ID（可选，用于关联执行记录）
 
         Yields:
             执行步骤的事件
@@ -1431,8 +1484,12 @@ class AgentService:
             agent_id=agent.id,
             user_id=user_id,
             session_id=session_id,
+            message_id=message_id,  # 使用前端传入的用户消息ID
             query=query
         )
+
+        # ✅ 新增：初始化 reasoning_steps 收集器
+        reasoning_steps_collected: List[Dict[str, Any]] = []
 
         try:
 
@@ -1583,6 +1640,18 @@ class AgentService:
                     if node_name == NODE_THINK:
                         reasoning = node_state.get("reasoning", "")
                         tool_decision = node_state.get("tool_decision", {})
+                        step_num = node_state.get(STATE_STEPS, 0)
+
+                        # ✅ 新增：收集推理步骤用于持久化
+                        if reasoning or tool_decision.get("tool"):
+                            reasoning_step = {
+                                "step": step_num,
+                                "reasoning": reasoning,
+                                "timestamp": datetime.now().isoformat(),
+                                "tool_decision": tool_decision if tool_decision.get("tool") else None
+                            }
+                            reasoning_steps_collected.append(reasoning_step)
+                            logger.info(f"🧠 [推理收集] 第 {step_num} 步推理已收集")
 
                         if reasoning or tool_decision.get("tool"):
                             logger.info(f"🧠 [推理事件] 推理: {reasoning[:100]}...")
@@ -1590,7 +1659,7 @@ class AgentService:
 
                             yield {
                                 "type": "reasoning",  # ✅ 新增事件类型
-                                "step": node_state.get(STATE_STEPS, 0),
+                                "step": step_num,
                                 "node": node_name,
                                 "reasoning": reasoning,
                                 "tool_decision": tool_decision,
@@ -1662,6 +1731,7 @@ class AgentService:
             # 短事务：更新执行记录为完成状态
             await self._update_execution_record(
                 execution_id=execution_id,
+                reasoning_steps=reasoning_steps_collected,  # ✅ 新增：持久化推理步骤
                 status=EXECUTION_STATUS_COMPLETED,
                 steps=final_steps,
                 result=final_output,

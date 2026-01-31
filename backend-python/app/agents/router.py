@@ -507,7 +507,8 @@ async def agent_chat(
                     query=request_obj.query,
                     user_id=current_user.id,
                     session_id=request_obj.session_id,
-                    runtime_knowledge_base_ids=request_obj.knowledge_base_ids  # 运行时选择的知识库
+                    runtime_knowledge_base_ids=request_obj.knowledge_base_ids,  # 运行时选择的知识库
+                    message_id=request_obj.message_id  # 前端传入的用户消息ID
                 ):
                     event_type = event.get("type")
 
@@ -700,4 +701,66 @@ async def list_agent_executions(
         raise
     except Exception as e:
         logger.error(f"获取执行历史失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/messages/{message_id}/execution")
+async def get_message_execution(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取消息关联的 Agent 执行记录（含 reasoning_steps）
+
+    通过 message_id 精确查询对应的 Agent 执行记录，用于恢复历史思维链
+    """
+    try:
+        from app.models import Message, Session
+
+        # 验证消息存在
+        message = db.query(Message).filter(Message.id == message_id).first()
+        if not message:
+            return {"message_id": message_id, "execution": None}
+
+        # 验证会话归属（权限检查）
+        session = db.query(Session).filter(
+            Session.id == message.session_id,
+            Session.user_id == current_user.id
+        ).first()
+
+        if not session:
+            raise HTTPException(status_code=403, detail="无权访问此消息")
+
+        # 查询执行记录
+        execution = db.query(AgentExecution).filter(
+            AgentExecution.message_id == message_id
+        ).first()
+
+        if not execution:
+            return {"message_id": message_id, "execution": None}
+
+        # 返回执行记录（包装在 execution 字段中）
+        return {
+            "message_id": message_id,
+            "execution": {
+                "id": execution.id,
+                "message_id": execution.message_id,
+                "agent_id": execution.agent_id,
+                "session_id": execution.session_id,
+                "status": execution.status,
+                "reasoning_steps": execution.reasoning_steps or [],
+                "tool_calls": execution.execution_log or [],
+                "steps": execution.steps,
+                "result": execution.result,
+                "error_message": execution.error_message,
+                "started_at": execution.started_at.isoformat() if execution.started_at else None,
+                "completed_at": execution.completed_at.isoformat() if execution.completed_at else None
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取消息执行记录失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

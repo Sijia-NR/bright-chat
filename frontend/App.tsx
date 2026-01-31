@@ -255,7 +255,8 @@ const AppContent: React.FC = () => {
           query: text,  // 关键：使用query字段
           session_id: currentSessionId || undefined,
           stream: true,
-          knowledge_base_ids: selectedKnowledgeBaseIds.length > 0 ? selectedKnowledgeBaseIds : undefined  // 传递运行时选择的知识库
+          knowledge_base_ids: selectedKnowledgeBaseIds,  // 直接传递选择的知识库（空数组表示不使用）
+          message_id: userMsg.id  // 新增：传入用户消息ID，用于关联执行记录
         };
 
         console.log('[Chat] 发送请求 payload:', requestPayload);
@@ -566,6 +567,67 @@ const AppContent: React.FC = () => {
       const history = await sessionService.getMessages(id);
       setMessages(history);
       setSavedMessageCount(history.length);  // 重置已保存消息计数
+
+      // ✅ 新增：按 message_id 精确加载 Agent 执行记录
+      if (session?.agentId) {
+        try {
+          console.log('[App] 开始加载 Agent 执行记录...');
+          const executionsMap: Record<string, AgentExecution> = {};
+
+          // 遍历助手消息，找到对应的用户消息的执行记录
+          const assistantMessages = history.filter(m => m.role === 'assistant');
+
+          for (const assistantMessage of assistantMessages) {
+            try {
+              // 找到这条助手消息对应的用户消息（前一条）
+              const assistantIndex = history.findIndex(m => m.id === assistantMessage.id);
+              const userMessage = assistantIndex > 0 ? history[assistantIndex - 1] : null;
+
+              if (userMessage && userMessage.role === 'user') {
+                const exec = await agentService.getMessageExecution(userMessage.id);
+
+                if (exec && exec.reasoning_steps && exec.reasoning_steps.length > 0) {
+                  executionsMap[assistantMessage.id] = {
+                    messageId: userMessage.id,  // 保存用户消息 ID
+                    events: [],  // 历史记录不包含实时事件
+                    reasoningSteps: exec.reasoning_steps,
+                    toolCalls: (exec.tool_calls || []).map(tc => ({
+                      tool: tc.tool,
+                      parameters: tc.parameters || {},
+                      result: tc.result,
+                      timestamp: tc.timestamp ? new Date(tc.timestamp).getTime() : Date.now()
+                    })),
+                    startTime: new Date(exec.started_at).getTime(),
+                    endTime: exec.completed_at ? new Date(exec.completed_at).getTime() : undefined,
+                    isComplete: exec.status === 'completed',
+                    showDetails: false  // 默认折叠
+                  };
+
+                  console.log('[App] ✅ 加载执行记录:', {
+                    userMessageId: userMessage.id,
+                    assistantMessageId: assistantMessage.id,
+                    reasoningSteps: exec.reasoning_steps.length,
+                    toolCalls: exec.tool_calls?.length || 0
+                  });
+                }
+              }
+            } catch (error) {
+              console.error(`[App] 加载助手消息 ${assistantMessage.id} 的执行记录失败:`, error);
+              // 继续处理其他消息
+            }
+          }
+
+          setAgentExecutions(executionsMap);
+          console.log('[App] Agent 执行记录加载完成，共', Object.keys(executionsMap).length, '条');
+
+        } catch (error) {
+          console.error('[App] 加载执行记录失败:', error);
+          // 失败不影响主流程，只是无法显示历史执行记录
+        }
+      } else {
+        // 非 Agent 会话，清空执行记录
+        setAgentExecutions({});
+      }
     } catch (e) {
       console.error("Failed to load messages", e);
     }
