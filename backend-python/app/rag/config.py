@@ -234,15 +234,21 @@ class RAGConfig:
                 """使用 HTTP API 查询"""
                 import json
                 try:
+                    # 构建请求体，只在参数不是 None 时才包含
+                    payload = {}
+                    if where is not None:
+                        payload["where"] = where
+                    if limit is not None:
+                        payload["limit"] = limit
+                    if offset is not None:
+                        payload["offset"] = offset
+                    if include is not None:
+                        payload["include"] = include
+
                     # ChromaDB v2 API 使用 POST 请求 + collection ID
                     resp = requests.post(
                         f"http://{self.host}:{self.port}/api/v2/tenants/default_tenant/databases/default_database/collections/{self.collection_id}/get",
-                        json={
-                            "where": where,
-                            "limit": limit or 10,
-                            "offset": offset or 0,
-                            "include": include or ["documents", "metadatas", "embeddings"]
-                        }
+                        json=payload
                     )
                     if resp.status_code == 200:
                         return resp.json()

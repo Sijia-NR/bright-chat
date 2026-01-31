@@ -583,9 +583,14 @@ class DocumentProcessor:
             }
 
             # 查询切片（ChromaDB 的 count() 不支持 where 参数，先查询再计数）
+            # 注意：必须传递 limit=None 或足够大的值，否则默认只返回 10 条
             include_fields = ["documents", "metadatas", "embeddings"] if include_embeddings else ["documents", "metadatas"]
+
+            # 一次性获取所有数据（在内存中分页）
+            # 这是因为 ChromaDB 的 get() 方法无法直接获取准确的总数
             results = collection.get(
                 where=where_clause,
+                limit=None,  # 获取所有匹配的数据
                 include=include_fields
             )
 
@@ -616,7 +621,8 @@ class DocumentProcessor:
             # 按 chunk_index 排序
             chunks_data.sort(key=lambda x: x['chunk_index'])
 
-            # 应用分页
+            # 应用分页（使用排序后的数组索引）
+            # 注意：offset 和 limit 是对排序后数组而言的，不是对 chunk_index 而言
             if limit is not None:
                 paginated_data = chunks_data[offset:offset + limit]
             else:

@@ -997,16 +997,16 @@ class AgentService:
                 parameters = call.get('parameters') or {}
                 action = parameters.get('action', 'unknown')
                 if action == "scrape":
-                    data = result.get('data', {}) if isinstance(result, dict) else {}
-                    title = data.get('title', '')
-                    content = data.get('content', '')
+                    data = (result.get('data') or {}) if isinstance(result, dict) else {}
+                    title = data.get('title', '') if data else ''
+                    content = data.get('content', '') if data else ''
                     prompt += f"### 工具 {i}: 浏览器抓取\n"
                     prompt += f"- 操作: 抓取网页内容\n"
                     prompt += f"- 网页标题: {title}\n"
                     prompt += f"- 网页内容: {content[:3000]}\n\n"
                 elif action == "search":
-                    data = result.get('data', {}) if isinstance(result, dict) else {}
-                    results = data.get('results', [])
+                    data = (result.get('data') or {}) if isinstance(result, dict) else {}
+                    results = data.get('results', []) if data else []
                     prompt += f"### 工具 {i}: 浏览器搜索\n"
                     prompt += f"- 搜索结果数: {len(results)}\n"
                     for r in results[:5]:
@@ -1374,7 +1374,8 @@ class AgentService:
                 session_id=session_id,
                 message_id=message_id,
                 input_prompt=query,
-                status=EXECUTION_STATUS_RUNNING
+                status=EXECUTION_STATUS_RUNNING,
+                started_at=datetime.utcnow()  # 显式使用 UTC 时间
             )
             db.add(execution)
             db.commit()
@@ -1431,7 +1432,7 @@ class AgentService:
                     execution.execution_log = execution_log
                 if error_message is not None:
                     execution.error_message = error_message
-                execution.completed_at = datetime.now()
+                execution.completed_at = datetime.utcnow()  # 统一使用 UTC 时间
 
                 db.commit()
                 logger.info(f"✅ [数据库] 执行记录已更新: {execution_id}")
@@ -1642,6 +1643,13 @@ class AgentService:
                         tool_decision = node_state.get("tool_decision", {})
                         step_num = node_state.get(STATE_STEPS, 0)
 
+                        # 🔍 调试日志
+                        logger.info(f"🔍 [DEBUG] THINK 节点 state 包含的键: {list(node_state.keys())}")
+                        logger.info(f"🔍 [DEBUG] reasoning 内容: '{reasoning[:200] if reasoning else '(空)'}'")
+                        logger.info(f"🔍 [DEBUG] tool_decision 内容: {tool_decision}")
+                        logger.info(f"🔍 [DEBUG] tool_decision.tool: {tool_decision.get('tool')}")
+                        logger.info(f"🔍 [DEBUG] 条件判断: reasoning={bool(reasoning)}, tool={tool_decision.get('tool')}")
+
                         # ✅ 新增：收集推理步骤用于持久化
                         if reasoning or tool_decision.get("tool"):
                             reasoning_step = {
@@ -1654,7 +1662,7 @@ class AgentService:
                             logger.info(f"🧠 [推理收集] 第 {step_num} 步推理已收集")
 
                         if reasoning or tool_decision.get("tool"):
-                            logger.info(f"🧠 [推理事件] 推理: {reasoning[:100]}...")
+                            logger.info(f"🧠 [推理事件] 推理: {reasoning[:100] if reasoning else '(无)'}...")
                             logger.info(f"🧠 [推理事件] 工具决策: {tool_decision}")
 
                             yield {

@@ -860,7 +860,7 @@ const AppContent: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <div className="space-y-8 mb-24" data-testid="messages-container">
+                  <div className="space-y-8 mb-24 w-full" data-testid="messages-container">
                     {/* ✨ Phase 1: 显示执行计划 */}
                     {agentPlan && selectedAgent && (
                       <AgentPlanViewer
@@ -873,16 +873,16 @@ const AppContent: React.FC = () => {
                       const execution = agentExecutions[m.id];
 
                       return (
-                        <div key={m.id} data-testid={`message-${m.id}`} data-message-role={m.role} className={`flex gap-4 md:gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                        <div key={m.id} data-testid={`message-${m.id}`} data-message-role={m.role} className={`flex gap-4 md:gap-6 w-full ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
                           <div className={`w-9 h-9 rounded-xl shrink-0 flex items-center justify-center text-white font-bold shadow-sm ${m.role === 'user' ? 'bg-gray-800' : 'bg-blue-600'}`}>
                             {m.role === 'user' ? 'U' : 'B'}
                           </div>
-                          <div className={`flex-1 ${m.role === 'user' ? 'flex flex-col items-end' : ''}`}>
-                            <div className={`p-4 md:p-5 rounded-2xl max-w-[85%] text-[15px] shadow-sm border ${
+                          <div className={`flex-1 min-w-0 ${m.role === 'user' ? 'flex flex-col items-end' : ''}`}>
+                            <div className={`p-4 md:p-5 rounded-2xl max-w-[85%] text-[15px] shadow-sm border overflow-hidden ${
                               m.role === 'user' ? 'bg-blue-600 text-white border-blue-500' : 'bg-white border-gray-100 text-gray-800'
                             }`}>
                               {m.role === 'user' ? (
-                                <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                                <div className="whitespace-pre-wrap break-words overflow-wrap-break-word">{m.content}</div>
                               ) : (
                                 <>
                                   <MessageContent content={m.content} />

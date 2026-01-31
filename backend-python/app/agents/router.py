@@ -754,8 +754,8 @@ async def get_message_execution(
                 "steps": execution.steps,
                 "result": execution.result,
                 "error_message": execution.error_message,
-                "started_at": execution.started_at.isoformat() if execution.started_at else None,
-                "completed_at": execution.completed_at.isoformat() if execution.completed_at else None
+                "started_at": execution.started_at.isoformat() + "Z" if execution.started_at else None,
+                "completed_at": execution.completed_at.isoformat() + "Z" if execution.completed_at else None
             }
         }
 

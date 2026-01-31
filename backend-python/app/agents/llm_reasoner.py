@@ -211,32 +211,81 @@ class LLMReasoner:
    - 计算问题 → 优先使用 code_executor（更精确）
    - 时间/日期 → datetime
    - 网页操作 → browser
+     - 直接访问URL → action: "scrape"
+     - 搜索关键词 → action: "search"
    - 信息检索 → 仅在用户已选择知识库时使用 knowledge_search
 3. **直接回答场景**:
    - 问候、闲聊不需要工具
    - 用户未选择知识库时，信息类问题应直接回答
 4. **参数完整性**: 确保工具所需参数完整且正确
 
-# 输出格式（纯 JSON）
+# ⚠️ 重要：必须返回完整的 JSON 格式
 
 {{
-  "reasoning": "分析过程（简要说明为什么选择或不选择工具）",
+  "reasoning": "详细分析：为什么选择这个工具，用户的意图是什么",
   "tool": "工具名称或 null",
+  "parameters": {{"参数名": "参数值"}},
+  "confidence": 0.95,
+  "should_continue": false
+}}
+
+# 💡 完整示例（必须包含所有字段）
+
+1. 计算问题：
+{{
+  "reasoning": "用户要求进行数学计算，使用 code_executor 工具执行 Python 代码",
+  "tool": "code_executor",
+  "parameters": {{"code": "print(100 * 200)"}},
+  "confidence": 0.95,
+  "should_continue": false
+}}
+
+2. 查询时间：
+{{
+  "reasoning": "用户询问当前时间，使用 datetime 工具获取",
+  "tool": "datetime",
   "parameters": {{}},
   "confidence": 0.95,
   "should_continue": false
 }}
 
-# 💡 决策示例
+3. 问候：
+{{
+  "reasoning": "用户在打招呼，直接友好回应，不需要使用工具",
+  "tool": null,
+  "parameters": {{}},
+  "confidence": 0.95,
+  "should_continue": false
+}}
 
-- "使用代码帮我计算 100 * 200" → {{"tool": "code_executor", "parameters": {{"code": "print(100 * 200)"}}}}
-- "现在几点了" → {{"tool": "datetime", "parameters": {{}}}}
-- "你好" → {{"tool": null, "parameters": {{}}}}
-- "搜索python教程"（已选择知识库） → {{"tool": "knowledge_search", "parameters": {{"query": "python教程"}}}}
-- "什么是模型服务"（未选择知识库） → {{"tool": null, "parameters": {{}}, "reasoning": "用户未选择知识库，直接回答问题"}}
-- "总结这个网页 https://example.com" → {{"tool": "browser", "parameters": {{"action": "scrape", "url": "https://example.com"}}}}
+4. 直接访问网页：
+{{
+  "reasoning": "用户要求总结指定网页内容，使用 browser 工具的 scrape 操作直接获取网页",
+  "tool": "browser",
+  "parameters": {{"action": "scrape", "url": "https://example.com"}},
+  "confidence": 0.95,
+  "should_continue": false
+}}
 
-现在请分析并返回 JSON：
+5. 搜索网页：
+{{
+  "reasoning": "用户要求搜索相关信息，使用 browser 工具的 search 操作",
+  "tool": "browser",
+  "parameters": {{"action": "search", "text": "Python教程"}},
+  "confidence": 0.90,
+  "should_continue": false
+}}
+
+6. 知识库搜索（已选择知识库）：
+{{
+  "reasoning": "用户已选择知识库，使用 knowledge_search 工具检索相关信息",
+  "tool": "knowledge_search",
+  "parameters": {{"query": "Python教程"}},
+  "confidence": 0.95,
+  "should_continue": false
+}}
+
+现在请分析用户问题，返回完整的 JSON（必须包含所有5个字段）：
 """
 
         return prompt
@@ -521,116 +570,99 @@ false
 
 
     def _parse_decision(self, response: str, available_tools: List[str]) -> Dict[str, Any]:
-        """解析 LLM 响应为决策（支持 JSON 和 Markdown 两种格式）"""
+        """解析 LLM 响应为决策（支持多种格式）"""
         try:
-            # 尝试解析 JSON 格式（新格式）
-            # 检查是否包含 JSON 代码块或以 { 开头
+            response_stripped = response.strip()
+
+            # 🔍 格式 1: 标准 JSON（以 { 开头）
+            if response_stripped.startswith('{'):
+                logger.info(f"📋 [格式检测] 标准 JSON")
+                return self._parse_json_format(response_stripped, available_tools)
+
+            # 🔍 格式 2: JSON 代码块（```json ... ```）
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
             if json_match:
-                # 从代码块中提取 JSON
-                json_str = json_match.group(1)
-                logger.info(f"📋 [JSON 解析] 从代码块中提取 JSON")
-            elif response.strip().startswith('{'):
-                # 直接尝试解析整个响应
-                json_str = response.strip()
-                logger.info(f"📋 [JSON 解析] 直接解析响应")
-            else:
-                # 回退到 Markdown 格式解析（旧格式兼容）
-                logger.info("📋 使用 Markdown 格式解析（向后兼容）")
-                reasoning = self._extract_section(response, "推理")
-                tool = self._extract_section(response, "工具决策").strip().lower()
-                parameters_str = self._extract_section(response, "工具参数")
-                confidence_str = self._extract_section(response, "置信度").strip()
-                should_continue_str = self._extract_section(response, "继续执行").strip().lower()
+                logger.info(f"📋 [格式检测] JSON 代码块")
+                return self._parse_json_format(json_match.group(1), available_tools)
 
-                # 解析参数 JSON
-                try:
-                    parameters = json.loads(parameters_str) if parameters_str and parameters_str != "{}" else {}
-                except json.JSONDecodeError:
-                    logger.warning(f"⚠️ 工具参数 JSON 解析失败: {parameters_str}")
-                    parameters = {}
+            # 🔍 格式 3: 工具名 + JSON 参数（新格式）
+            # 例如: browser\n{"action": "search", "url": "..."}
+            lines = response_stripped.split('\n', 1)
+            if len(lines) == 2:
+                first_line = lines[0].strip()
+                second_line = lines[1].strip()
 
-                # 解析置信度
-                try:
-                    confidence = float(confidence_str) if confidence_str else 0.5
-                except ValueError:
-                    logger.warning(f"⚠️ 置信度解析失败: {confidence_str}")
-                    confidence = 0.5
+                if first_line in available_tools and second_line.startswith('{'):
+                    logger.info(f"📋 [格式检测] 工具名+参数格式")
+                    logger.info(f"   工具: {first_line}")
 
-                should_continue = should_continue_str in ["true", "yes", "是"]
+                    try:
+                        parameters = json.loads(second_line)
+                        logger.info(f"   参数: {parameters}")
 
-                # 验证工具是否可用
-                if tool and tool != "none" and tool not in available_tools:
-                    logger.warning(f"⚠️ LLM 选择的工具 {tool} 不可用,降级到 none")
-                    tool = "none"
+                        return {
+                            "reasoning": f"使用 {first_line} 工具执行任务",
+                            "tool": first_line,
+                            "parameters": parameters,
+                            "confidence": 0.9,
+                            "should_continue": False
+                        }
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"⚠️ 参数解析失败: {e}")
 
-                return {
-                    "reasoning": reasoning,
-                    "tool": tool if tool != "none" else None,
-                    "parameters": parameters,
-                    "confidence": confidence,
-                    "should_continue": should_continue
-                }
+            # 🔍 格式 4: Markdown 格式（包含 ## 标题）
+            has_markdown_sections = any(
+                f"## {section}" in response
+                for section in ["推理", "工具决策", "工具参数", "置信度", "继续执行"]
+            )
 
-            # 解析提取的 JSON 字符串
-            try:
-                data = json.loads(json_str)
-                # 检查是否解析为 None（JSON "null"）
-                if data is None:
-                    logger.warning("⚠️ [JSON 解析] JSON 解析结果为 null，使用默认值")
-                    data = {}
-                logger.info(f"✅ [JSON 解析] JSON 解析成功")
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ [JSON 解析] JSON 解析失败: {e}")
-                logger.error(f"📄 [JSON 解析] JSON 字符串: {json_str[:200]}...")
-                # 降级到 Markdown 格式
-                logger.info("📋 降级到 Markdown 格式解析")
-                reasoning = self._extract_section(response, "推理")
-                tool = self._extract_section(response, "工具决策").strip().lower()
-                parameters_str = self._extract_section(response, "工具参数")
-                confidence_str = self._extract_section(response, "置信度").strip()
-                should_continue_str = self._extract_section(response, "继续执行").strip().lower()
+            if has_markdown_sections:
+                logger.info(f"📋 [格式检测] Markdown 格式")
+                return self._parse_markdown_format(response, available_tools)
 
-                try:
-                    parameters = json.loads(parameters_str) if parameters_str and parameters_str != "{}" else {}
-                except json.JSONDecodeError:
-                    parameters = {}
+            # 🔍 格式 5: 直接答案（兜底）
+            logger.info(f"📋 [格式检测] 直接答案（非结构化文本）")
+            logger.info(f"📄 [直接答案] 内容: {response[:100]}...")
 
-                try:
-                    confidence = float(confidence_str) if confidence_str else 0.5
-                except ValueError:
-                    confidence = 0.5
+            return {
+                "reasoning": response,
+                "tool": None,
+                "parameters": {},
+                "confidence": 0.9,
+                "should_continue": False
+            }
 
-                should_continue = should_continue_str in ["true", "yes", "是"]
+        except Exception as e:
+            logger.error(f"❌ 解析决策失败: {e}")
+            logger.error(f"📄 响应内容: {response[:500]}")
+            return {
+                "reasoning": response[:200] if response else "解析失败",
+                "tool": None,
+                "parameters": {},
+                "confidence": 0.5,
+                "should_continue": False
+            }
 
-                if tool and tool != "none" and tool not in available_tools:
-                    logger.warning(f"⚠️ LLM 选择的工具 {tool} 不可用,降级到 none")
-                    tool = "none"
+    def _parse_json_format(self, json_str: str, available_tools: List[str]) -> Dict[str, Any]:
+        """解析标准 JSON 格式"""
+        try:
+            data = json.loads(json_str)
+            if data is None:
+                data = {}
 
-                return {
-                    "reasoning": reasoning,
-                    "tool": tool if tool != "none" else None,
-                    "parameters": parameters,
-                    "confidence": confidence,
-                    "should_continue": should_continue
-                }
+            logger.info(f"✅ [JSON 解析] 成功")
 
-            # 解析 JSON 数据
             tool = data.get("tool")
-            # 处理 null 值
             if tool is None or tool == "null":
                 tool = None
             elif isinstance(tool, str):
                 tool = tool.strip().lower()
-                if tool == "none" or tool == "null":
+                if tool in ["none", "null"]:
                     tool = None
 
-            # 验证工具是否可用
             if tool and tool not in available_tools:
-                logger.warning(f"⚠️ LLM 选择的工具 {tool} 不可用,降级到 none")
+                logger.warning(f"⚠️ 工具 {tool} 不可用")
                 tool = None
-
-            logger.info(f"✅ [JSON 解析] 工具决策: tool={tool}, parameters={data.get('parameters', {})}")
 
             return {
                 "reasoning": data.get("reasoning", ""),
@@ -640,17 +672,45 @@ false
                 "should_continue": bool(data.get("should_continue", False))
             }
 
-        except Exception as e:
-            logger.error(f"❌ 解析决策失败: {e}")
-            logger.error(f"📄 响应内容: {response[:500]}")
-            # 返回安全默认值
-            return {
-                "reasoning": response[:200] if response else "解析失败",
-                "tool": None,
-                "parameters": {},
-                "confidence": 0.5,
-                "should_continue": False
-            }
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ [JSON 解析] 失败: {e}")
+            raise
+
+    def _parse_markdown_format(self, response: str, available_tools: List[str]) -> Dict[str, Any]:
+        """解析 Markdown 格式"""
+        reasoning = self._extract_section(response, "推理")
+        tool = self._extract_section(response, "工具决策").strip().lower()
+        parameters_str = self._extract_section(response, "工具参数")
+        confidence_str = self._extract_section(response, "置信度").strip()
+        should_continue_str = self._extract_section(response, "继续执行").strip().lower()
+
+        # 解析参数
+        try:
+            parameters = json.loads(parameters_str) if parameters_str and parameters_str != "{}" else {}
+        except json.JSONDecodeError:
+            logger.warning(f"⚠️ 参数解析失败")
+            parameters = {}
+
+        # 解析置信度
+        try:
+            confidence = float(confidence_str) if confidence_str else 0.5
+        except ValueError:
+            confidence = 0.5
+
+        should_continue = should_continue_str in ["true", "yes", "是"]
+
+        # 验证工具
+        if tool and tool != "none" and tool not in available_tools:
+            logger.warning(f"⚠️ 工具 {tool} 不可用")
+            tool = "none"
+
+        return {
+            "reasoning": reasoning,
+            "tool": tool if tool != "none" else None,
+            "parameters": parameters,
+            "confidence": confidence,
+            "should_continue": should_continue
+        }
 
     def _extract_section(self, text: str, section_name: str) -> str:
         """提取文本中的某个部分"""
