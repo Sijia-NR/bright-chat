@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Calculator, Settings, Search, BookOpen } from 'lucide-react';
 import { AgentTool } from '../types';
+
+// 工具分类图标映射
+const TOOL_CATEGORY_ICONS: Record<string, React.ElementType> = {
+  calculation: Calculator,
+  system: Settings,
+  search: Search,
+  knowledge: BookOpen,
+};
 
 interface ToolSelectorProps {
   availableTools: AgentTool[];
@@ -11,10 +19,10 @@ interface ToolSelectorProps {
 
 // 工具分类
 const TOOL_CATEGORIES = {
-  calculation: { name: '计算', icon: '🧮', color: 'bg-blue-50 text-blue-600' },
-  system: { name: '系统', icon: '⚙️', color: 'bg-gray-50 text-gray-600' },
-  search: { name: '搜索', icon: '🔍', color: 'bg-green-50 text-green-600' },
-  knowledge: { name: '知识库', icon: '📚', color: 'bg-purple-50 text-purple-600' },
+  calculation: { name: '计算', color: 'bg-blue-50 text-blue-600' },
+  system: { name: '系统', color: 'bg-gray-50 text-gray-600' },
+  search: { name: '搜索', color: 'bg-green-50 text-green-600' },
+  knowledge: { name: '知识库', color: 'bg-purple-50 text-purple-600' },
 };
 
 const ToolSelector: React.FC<ToolSelectorProps> = ({
@@ -63,10 +71,10 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({
       {Object.entries(toolsByCategory).map(([category, tools]) => {
         const categoryInfo = TOOL_CATEGORIES[category] || {
           name: category,
-          icon: '📦',
           color: 'bg-gray-50 text-gray-600'
         };
         const isExpanded = expandedCategories.has(category);
+        const IconComponent = TOOL_CATEGORY_ICONS[category] || ChevronRight;
 
         return (
           <div key={category} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -79,7 +87,7 @@ const ToolSelector: React.FC<ToolSelectorProps> = ({
               disabled={disabled}
             >
               <div className="flex items-center gap-2">
-                <span className="text-lg">{categoryInfo.icon}</span>
+                <IconComponent className="w-5 h-5 text-gray-600" />
                 <span className={`text-sm font-bold ${categoryInfo.color}`}>
                   {categoryInfo.name}
                 </span>

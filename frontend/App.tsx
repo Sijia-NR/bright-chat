@@ -3,6 +3,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import { AgentPlanViewer } from './components/AgentPlanViewer';
+import { AgentExecutionProgress } from './components/AgentExecutionProgress';
 import { AgentExecutionSummary } from './components/AgentExecutionSummary';
 import { AgentExecutionDetails } from './components/AgentExecutionDetails';
 import KnowledgeSearchModal from './components/KnowledgeSearchModal';
@@ -17,7 +18,7 @@ import MessageContent from './MessageContent';
 import KnowledgeBaseDetail from './components/KnowledgeBaseDetail';
 import KnowledgeManageModal from './components/KnowledgeManageModal';
 import { ModalProvider, useModal } from './contexts/ModalContext';
-import { Message, ChatSession, User, LLMModel, Agent, AgentAPI, AgentType, KnowledgeGroup, KnowledgeBase } from './types';
+import { Message, ChatSession, User, LLMModel, Agent, AgentAPI, AgentType, KnowledgeGroup, KnowledgeBase, AgentExecution, AgentExecutionEvent } from './types';
 import { chatService } from './services/chatService';
 import { authService } from './services/authService';
 import { sessionService } from './services/sessionService';
@@ -62,7 +63,22 @@ const AppContent: React.FC = () => {
   const [currentSubtaskIndex, setCurrentSubtaskIndex] = useState(0);
 
   // Agent 执行记录映射 (messageId -> AgentExecution)
-  const [agentExecutions, setAgentExecutions] = useState<Record<string, import('./types').AgentExecution>>({});
+  const [agentExecutions, setAgentExecutions] = useState<Record<string, AgentExecution>>({});
+
+  // Agent 执行中的推理和步骤信息
+  const [currentReasoning, setCurrentReasoning] = useState<string>('');
+  const [reasoningSteps, setReasoningSteps] = useState<Array<{
+    reasoning: string;
+    toolDecision?: any;
+    step: number;
+    timestamp: string;
+  }>>([]);
+  const [currentToolDecision, setCurrentToolDecision] = useState<any | null>(null);
+
+  // 确保 reasoningSteps 始终是数组
+  const safeReasoningSteps = Array.isArray(reasoningSteps) ? reasoningSteps : [];
+  const [currentStep, setCurrentStep] = useState(1);
+  const [totalSteps, setTotalSteps] = useState(5);
 
   // 刷新模型列表的方法
   const refreshModels = useCallback(async () => {
@@ -249,8 +265,15 @@ const AppContent: React.FC = () => {
 
         // 初始化执行记录
         const executionStartTime = Date.now();
-        const currentToolCalls: import('./types').AgentExecution['toolCalls'] = [];
-        const currentEvents: import('./types').AgentExecutionEvent[] = [];
+        const currentToolCalls: AgentExecution['toolCalls'] = [];
+        const currentEvents: AgentExecutionEvent[] = [];
+        const currentReasoningSteps: AgentExecution['reasoningSteps'] = [];
+
+        // 重置进度状态
+        setCurrentReasoning('');
+        setCurrentStep(1);
+        setTotalSteps(5);
+        setReasoningSteps([]);
 
         // 为当前消息创建执行记录
         setAgentExecutions(prev => ({
@@ -292,10 +315,35 @@ const AppContent: React.FC = () => {
 
             console.log('[Chat] Agent 步骤:', { node, step, state });
 
-            // 如果状态有输出，显示临时内容
-            if (state.output) {
-              fullContent = state.output;
-              setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: fullContent } : m));
+            // 更新步骤计数
+            if (step > 0) {
+              setCurrentStep(step);
+              setTotalSteps(prev => Math.max(prev, step));
+            }
+
+            // ❌ 不再显示 state.output，因为它是临时输出
+            // 最终答案由 complete 事件的 output 提供
+          } else if (event.type === 'reasoning') {
+            // 推理事件：收集 LLM 思考过程
+            const reasoning = event.reasoning || '';
+            const toolDecision = event.tool_decision || {};
+            const step = event.step || 0;
+            const timestamp = event.timestamp || new Date().toISOString();
+
+            console.log('[Chat] Agent 推理:', { reasoning, toolDecision, step });
+
+            // 收集到思维链路数组
+            const reasoningStep = { reasoning, toolDecision, step, timestamp };
+            setReasoningSteps(prev => [...prev, reasoningStep]);
+            currentReasoningSteps.push(reasoningStep);
+
+            // 保存最新的工具决策
+            setCurrentToolDecision(toolDecision);
+
+            setCurrentReasoning(reasoning);
+            if (step > 0) {
+              setCurrentStep(step);
+              setTotalSteps(prev => Math.max(prev, step));
             }
           } else if (event.type === 'tool_call') {
             // 🔧 收集工具调用事件（不再拼接到 fullContent）
@@ -326,12 +374,18 @@ const AppContent: React.FC = () => {
               [assistantMsgId]: {
                 ...prev[assistantMsgId],
                 events: [...currentEvents],
+                reasoningSteps: [...currentReasoningSteps],
                 toolCalls: [...currentToolCalls],
                 endTime: Date.now(),
                 isComplete: true,
                 showDetails: false  // 默认折叠
               }
             }));
+
+            // 重置思维链路状态
+            setReasoningSteps([]);
+            setCurrentReasoning('');
+            setCurrentToolDecision(null);
 
             setAgentPlan(null);
             setCurrentSubtaskIndex(0);
@@ -352,6 +406,7 @@ const AppContent: React.FC = () => {
             [assistantMsgId]: {
               ...prev[assistantMsgId],
               events: [...currentEvents],
+              reasoningSteps: [...currentReasoningSteps],
               toolCalls: [...currentToolCalls]
             }
           }));
@@ -777,7 +832,19 @@ const AppContent: React.FC = () => {
                               )}
                             </div>
 
-                            {/* ✨ Agent 执行摘要和详情（仅当存在时显示） */}
+                            {/* ✨ Agent 执行进度（执行中） - 只要有 reasoning 或 toolCalls 就显示 */}
+                            {execution && !execution.isComplete && (currentReasoning || safeReasoningSteps.length > 0 || execution.toolCalls.length > 0) && (
+                              <AgentExecutionProgress
+                                toolCalls={execution.toolCalls}
+                                reasoning={currentReasoning}
+                                reasoningSteps={safeReasoningSteps}
+                                toolDecision={currentToolDecision}
+                                currentStep={currentStep}
+                                totalSteps={totalSteps}
+                              />
+                            )}
+
+                            {/* ✨ Agent 执行摘要和详情（已完成） */}
                             {execution && execution.isComplete && (
                               <>
                                 <AgentExecutionSummary

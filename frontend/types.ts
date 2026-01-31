@@ -1,3 +1,5 @@
+import { LucideIcon } from 'lucide-react';
+import { Calculator, Clock, Search, Terminal, Globe, FileText } from 'lucide-react';
 
 export type Role = 'user' | 'assistant' | 'system';
 export type UserRole = 'admin' | 'user';
@@ -234,6 +236,7 @@ export interface AgentChatRequest {
   query: string;
   session_id?: string;
   stream?: boolean;
+  knowledge_base_ids?: string[];  // 运行时选择的知识库ID列表（可选）
 }
 
 // Agent 创建请求类型
@@ -268,7 +271,7 @@ export interface UpdateAgentRequest {
 
 // Agent 执行事件类型
 export interface AgentExecutionEvent {
-  type: 'start' | 'step' | 'tool_call' | 'complete' | 'error' | 'done';
+  type: 'start' | 'step' | 'tool_call' | 'complete' | 'error' | 'done' | 'plan' | 'subtask_status';
   content?: string;
   output?: string;
   error?: string;
@@ -276,6 +279,81 @@ export interface AgentExecutionEvent {
   tool_name?: string;
   tool_input?: Record<string, any>;
   tool_output?: any;
+  tool?: string;
+  parameters?: Record<string, any>;
+  result?: any;
+}
+
+// 工具元数据映射
+export const TOOL_METADATA: Record<string, {
+  displayName: string;
+  icon: LucideIcon;
+  color: string;
+  description: string;
+}> = {
+  calculator: { displayName: '计算器', icon: Calculator, color: 'blue', description: '数学计算' },
+  datetime: { displayName: '时间', icon: Clock, color: 'green', description: '获取当前时间' },
+  knowledge_search: { displayName: '知识检索', icon: Search, color: 'purple', description: '搜索知识库' },
+  code_executor: { displayName: '代码执行', icon: Terminal, color: 'orange', description: '执行 Python 代码' },
+  browser: { displayName: '浏览器', icon: Globe, color: 'cyan', description: '网页浏览' },
+  file: { displayName: '文件操作', icon: FileText, color: 'yellow', description: '读写文件' }
+};
+
+// Agent 执行记录
+export interface AgentExecution {
+  messageId: string;
+  events: AgentExecutionEvent[];
+  reasoningSteps?: Array<{
+    reasoning: string;
+    toolDecision?: {
+      tool: string | null;
+      parameters: Record<string, any>;
+      confidence: number;
+    };
+    step: number;
+    timestamp: string;
+  }>;
+  toolCalls: Array<{
+    tool: string;
+    parameters: Record<string, any>;
+    result: any;
+    timestamp: number;
+  }>;
+  startTime: number;
+  endTime?: number;
+  isComplete: boolean;
+  showDetails: boolean;
+}
+
+// ✨ Phase 1: 执行计划事件
+export interface AgentPlanEvent {
+  type: 'plan';
+  execution_id: string;
+  query: string;
+  complexity: 'simple' | 'complex';
+  subtasks: AgentSubTask[];
+  estimated_duration: number;
+  confidence: number;
+}
+
+// 子任务类型（用于执行计划）
+export interface AgentSubTask {
+  id: string;
+  description: string;
+  objective: string;
+  priority: 'high' | 'medium' | 'low';
+  estimated_steps: number;
+}
+
+// ✨ Phase 1: 子任务状态更新事件
+export interface AgentSubtaskStatusEvent {
+  type: 'subtask_status';
+  execution_id: string;
+  subtask_id: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  progress: number; // 0-1
+  result_summary?: string;
+  error?: string;
 }
 
 // ==================== 知识库相关类型 ====================
