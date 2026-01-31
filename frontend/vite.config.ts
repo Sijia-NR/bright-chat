@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
 
     return {
       server: {
-        port: 3000,  // 前端开发服务器端口
+        port: 9003,  // 前端开发服务器端口
         host: '0.0.0.0',
         strictPort: true,
         allowedHosts: ['localhost', '.localhost', '127.0.0.1'],

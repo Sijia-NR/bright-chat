@@ -14,19 +14,25 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from ..core.database import get_db, get_db_session
 from ..core.security import get_current_user_id
 from ..models.user import User
 from ..models.agent import (
     Agent,
+    AgentExecution,
     AgentCreate,
     AgentUpdate,
     AgentResponse,
     AgentChatRequest,
     AgentExecutionResponse,
+    AgentListResponse,
+    AgentExecutionListResponse,
+    APIResponse,
     PREDEFINED_TOOLS,
 )
+from ..models.llm_model import LLMModel
 from .agent_service import get_agent_service
 
 router = APIRouter()
@@ -75,6 +81,39 @@ async def get_current_user(
         )
 
 
+# ==================== 辅助函数 ====================
+
+def _enhance_agent_response(agent: Agent, db: Session) -> dict:
+    """增强 Agent 响应，添加 LLM 模型名称"""
+    agent_dict = {
+        "id": agent.id,
+        "name": agent.name,
+        "display_name": agent.display_name,
+        "description": agent.description,
+        "agent_type": agent.agent_type,
+        "system_prompt": agent.system_prompt,
+        "knowledge_base_ids": agent.knowledge_base_ids,
+        "tools": agent.tools,
+        "config": agent.config,
+        "llm_model_id": agent.llm_model_id,
+        "llm_model_name": None,
+        "enable_knowledge": agent.enable_knowledge if hasattr(agent, 'enable_knowledge') else True,
+        "order": agent.order if hasattr(agent, 'order') else 0,
+        "is_active": agent.is_active,
+        "created_by": agent.created_by,
+        "created_at": agent.created_at,
+        "updated_at": agent.updated_at,
+    }
+
+    # 查询 LLM 模型名称
+    if agent.llm_model_id:
+        llm_model = db.query(LLMModel).filter(LLMModel.id == agent.llm_model_id).first()
+        if llm_model:
+            agent_dict["llm_model_name"] = llm_model.display_name
+
+    return agent_dict
+
+
 # ==================== Agent 管理 API ====================
 
 @router.post("/", response_model=AgentResponse)
@@ -89,11 +128,49 @@ async def create_agent(
         if agent_data.tools:
             available_tools = [tool.name for tool in PREDEFINED_TOOLS]
             invalid_tools = set(agent_data.tools) - set(available_tools)
+
             if invalid_tools:
+                # 创建工具映射建议
+                tool_mapping = {
+                    "database_query": "knowledge_search",
+                    "web_search": "browser",
+                    "code_interpreter": "code_executor"
+                }
+
+                suggestions = []
+                for invalid_tool in invalid_tools:
+                    if invalid_tool in tool_mapping:
+                        suggested = tool_mapping[invalid_tool]
+                        suggestions.append(f"  • '{invalid_tool}' → 建议使用 '{suggested}'")
+                    else:
+                        suggestions.append(f"  • '{invalid_tool}' → 暂不支持")
+
+                # 构建友好的错误消息
+                error_msg = f"不支持的工具: {', '.join(invalid_tools)}\n\n"
+                error_msg += f"当前支持的工具:\n"
+                for tool in PREDEFINED_TOOLS:
+                    error_msg += f"  • {tool.name} - {tool.display_name}\n"
+
+                if suggestions:
+                    error_msg += f"\n建议:\n"
+                    error_msg += "\n".join(suggestions)
+
                 raise HTTPException(
                     status_code=400,
-                    detail=f"不支持的工具: {', '.join(invalid_tools)}. 可用工具: {', '.join(available_tools)}"
+                    detail=error_msg
                 )
+
+        # 验证 llm_model_id 是否存在
+        if agent_data.llm_model_id:
+            llm_model = db.query(LLMModel).filter(LLMModel.id == agent_data.llm_model_id).first()
+            if not llm_model:
+                raise HTTPException(status_code=400, detail="指定的 LLM 模型不存在")
+
+        # 获取下一个 order 值（如果未指定）
+        order = agent_data.order
+        if order is None:
+            max_order = db.query(func.coalesce(func.max(Agent.order), -1)).scalar()
+            order = max_order + 1
 
         agent = Agent(
             name=agent_data.name,
@@ -104,12 +181,15 @@ async def create_agent(
             knowledge_base_ids=agent_data.knowledge_base_ids,
             tools=agent_data.tools,
             config=agent_data.config,
+            llm_model_id=agent_data.llm_model_id,
+            enable_knowledge=agent_data.enable_knowledge,
+            order=order,
             created_by=current_user.id
         )
         db.add(agent)
         db.commit()
         db.refresh(agent)
-        return agent
+        return _enhance_agent_response(agent, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -118,21 +198,63 @@ async def create_agent(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/")
+@router.get("/", response_model=AgentListResponse)
 async def list_agents(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = 1,
+    limit: int = 20,
+    agent_type: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    search: Optional[str] = None
 ):
-    """列出所有 Agent"""
+    """列出所有 Agent（支持分页、过滤、搜索）"""
     try:
-        # 管理员可以看到所有 Agent，普通用户只能看到激活的 Agent
-        if current_user.role.value == "admin":
-            agents = db.query(Agent).all()
-        else:
-            agents = db.query(Agent).filter(Agent.is_active == True).all()
+        # 验证分页参数
+        if page < 1:
+            page = 1
+        if limit < 1 or limit > 100:
+            limit = 20
 
-        # 返回符合前端期望的格式
-        return {"agents": agents}
+        # 构建查询
+        query = db.query(Agent)
+
+        # 非管理员只能看到激活的 Agent
+        if current_user.role.value != "admin":
+            query = query.filter(Agent.is_active == True)
+        elif is_active is not None:
+            query = query.filter(Agent.is_active == is_active)
+
+        # 按 agent_type 过滤
+        if agent_type:
+            query = query.filter(Agent.agent_type == agent_type)
+
+        # 搜索功能（匹配 name 或 display_name）
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                (Agent.name.like(search_pattern)) | (Agent.display_name.like(search_pattern))
+            )
+
+        # 获取总数
+        total = query.count()
+
+        # 按 order 排序，然后分页
+        query = query.order_by(Agent.order.asc(), Agent.created_at.desc())
+        agents = query.offset((page - 1) * limit).limit(limit).all()
+
+        # 增强 Agent 响应（添加 llm_model_name）
+        enhanced_agents = [_enhance_agent_response(agent, db) for agent in agents]
+
+        has_more = (page * limit) < total
+
+        return AgentListResponse(
+            agents=enhanced_agents,
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=has_more
+        )
     except Exception as e:
         logger.error(f"获取 Agent 列表失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -186,7 +308,7 @@ async def get_agent(
         agent = db.query(Agent).filter(Agent.id == agent_id).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent 不存在")
-        return agent
+        return _enhance_agent_response(agent, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -215,11 +337,43 @@ async def update_agent(
         if agent_data.tools:
             available_tools = [tool.name for tool in PREDEFINED_TOOLS]
             invalid_tools = set(agent_data.tools) - set(available_tools)
+
             if invalid_tools:
+                # 创建工具映射建议
+                tool_mapping = {
+                    "database_query": "knowledge_search",
+                    "web_search": "browser",
+                    "code_interpreter": "code_executor"
+                }
+
+                suggestions = []
+                for invalid_tool in invalid_tools:
+                    if invalid_tool in tool_mapping:
+                        suggested = tool_mapping[invalid_tool]
+                        suggestions.append(f"  • '{invalid_tool}' → 建议使用 '{suggested}'")
+                    else:
+                        suggestions.append(f"  • '{invalid_tool}' → 暂不支持")
+
+                # 构建友好的错误消息
+                error_msg = f"不支持的工具: {', '.join(invalid_tools)}\n\n"
+                error_msg += f"当前支持的工具:\n"
+                for tool in PREDEFINED_TOOLS:
+                    error_msg += f"  • {tool.name} - {tool.display_name}\n"
+
+                if suggestions:
+                    error_msg += f"\n建议:\n"
+                    error_msg += "\n".join(suggestions)
+
                 raise HTTPException(
                     status_code=400,
-                    detail=f"不支持的工具: {', '.join(invalid_tools)}"
+                    detail=error_msg
                 )
+
+        # 验证 llm_model_id 是否存在
+        if agent_data.llm_model_id:
+            llm_model = db.query(LLMModel).filter(LLMModel.id == agent_data.llm_model_id).first()
+            if not llm_model:
+                raise HTTPException(status_code=400, detail="指定的 LLM 模型不存在")
 
         # 更新字段
         if agent_data.name is not None:
@@ -236,12 +390,18 @@ async def update_agent(
             agent.tools = agent_data.tools
         if agent_data.config is not None:
             agent.config = agent_data.config
+        if agent_data.llm_model_id is not None:
+            agent.llm_model_id = agent_data.llm_model_id
+        if agent_data.enable_knowledge is not None:
+            agent.enable_knowledge = agent_data.enable_knowledge
+        if agent_data.order is not None:
+            agent.order = agent_data.order
         if agent_data.is_active is not None:
             agent.is_active = agent_data.is_active
 
         db.commit()
         db.refresh(agent)
-        return agent
+        return _enhance_agent_response(agent, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -346,7 +506,8 @@ async def agent_chat(
                     agent=agent,
                     query=request_obj.query,
                     user_id=current_user.id,
-                    session_id=request_obj.session_id
+                    session_id=request_obj.session_id,
+                    runtime_knowledge_base_ids=request_obj.knowledge_base_ids  # 运行时选择的知识库
                 ):
                     event_type = event.get("type")
 
@@ -496,26 +657,45 @@ async def agent_chat(
 
 # ==================== Agent 执行历史 API ====================
 
-@router.get("/{agent_id}/executions")
+@router.get("/{agent_id}/executions", response_model=AgentExecutionListResponse)
 async def list_agent_executions(
     agent_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    page: int = 1,
     limit: int = 50
 ):
-    """列出 Agent 的执行历史"""
+    """列出 Agent 的执行历史（支持分页）"""
     try:
         # 验证 Agent 存在
         agent = db.query(Agent).filter(Agent.id == agent_id).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent 不存在")
 
-        # 获取执行历史
-        executions = db.query(AgentExecution).filter(
-            AgentExecution.agent_id == agent_id
-        ).order_by(AgentExecution.started_at.desc()).limit(limit).all()
+        # 验证分页参数
+        if page < 1:
+            page = 1
+        if limit < 1 or limit > 100:
+            limit = 50
 
-        return {"executions": executions}
+        # 构建查询
+        query = db.query(AgentExecution).filter(AgentExecution.agent_id == agent_id)
+
+        # 获取总数
+        total = query.count()
+
+        # 按开始时间倒序，然后分页
+        executions = query.order_by(AgentExecution.started_at.desc()).offset((page - 1) * limit).limit(limit).all()
+
+        has_more = (page * limit) < total
+
+        return AgentExecutionListResponse(
+            executions=executions,
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=has_more
+        )
     except HTTPException:
         raise
     except Exception as e:

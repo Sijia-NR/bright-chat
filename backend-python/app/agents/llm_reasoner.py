@@ -99,7 +99,7 @@ class LLMReasoner:
         agent_config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        执行推理决策（混合方案：规则引擎 + LLM 分析）
+        执行推理决策（纯 LLM 驱动，无规则引擎）
 
         Args:
             question: 用户问题
@@ -111,194 +111,36 @@ class LLMReasoner:
         Returns:
             决策结果
         """
-        # ✅ Phase 1: 检测用户是否选择了知识库
+        # 检测知识库状态
         knowledge_base_ids = agent_config.get("knowledge_base_ids", [])
         has_knowledge_base = len(knowledge_base_ids) > 0
 
-        logger.info(f"📚 [推理] 知识库状态: {'已选择' if has_knowledge_base else '未选择'}")
-
-        # 🔥 优先使用规则引擎（更可靠）
-        rule_decision = self._apply_rules(question, available_tools, has_knowledge_base)
-
-        # ✅ 规则引擎决策判断逻辑优化
-        if rule_decision:
-            tool = rule_decision.get("tool")
-            confidence = rule_decision.get("confidence", 0)
-
-            # 知识库规则：置信度 >= 0.80 直接返回（因为这是合理的默认行为）
-            if tool == "knowledge_search" and confidence >= 0.80:
-                logger.info(f"✅ [规则引擎] 知识库规则匹配: {tool} (置信度: {confidence})")
-                return rule_decision
-
-            # 其他规则：置信度 >= 0.90 直接返回
-            if confidence >= 0.90:
-                logger.info(f"✅ [规则引擎] 高置信度决策: {tool} (置信度: {confidence})")
-                return rule_decision
-
-        # 规则引擎不确定时，使用 LLM 分析
-        logger.info(f"🤖 [LLM 推理] 规则引擎不确定，使用 LLM 分析")
+        logger.info(f"🤖 [LLM 推理] agent_config: {agent_config}")
+        logger.info(f"🤖 [LLM 推理] knowledge_base_ids: {knowledge_base_ids}")
+        logger.info(f"🤖 [LLM 推理] has_knowledge_base: {has_knowledge_base}")
+        logger.info(f"🤖 [LLM 推理] 使用纯 LLM 分析（无规则引擎）")
 
         try:
+            # 构建增强的 prompt
             prompt = self._build_reasoning_prompt(
-                question=question,
-                available_tools=available_tools,
-                conversation_history=conversation_history,
-                previous_steps=previous_steps,
-                agent_config=agent_config,
-                has_knowledge_base=has_knowledge_base
+                question, available_tools, conversation_history,
+                previous_steps, agent_config, has_knowledge_base
             )
 
-            response = await self._call_llm(
-                prompt=prompt,
-                question=question,
-                agent_config=agent_config,
-                has_knowledge_base=has_knowledge_base
-            )
+            # 调用 LLM
+            response = await self._call_llm(prompt, question, agent_config, has_knowledge_base)
 
+            # 解析决策
             decision = self._parse_decision(response, available_tools)
+
+            logger.info(f"✅ [LLM 推理] 工具: {decision.get('tool')}, 置信度: {decision.get('confidence', 0)}")
+
             return decision
 
         except Exception as e:
             logger.error(f"❌ LLM 推理失败: {e}")
-            # 最终降级到规则引擎
+            # 降级到简单规则（仅作为后备）
             return self._fallback_decision(question, available_tools, previous_steps)
-
-    def _apply_rules(self, question: str, available_tools: List[str], has_knowledge_base: bool) -> Optional[Dict[str, Any]]:
-        """
-        应用规则引擎（高优先级规则）
-
-        Returns:
-            决策字典，如果没有匹配规则则返回 None
-        """
-        logger.info(f"🔍 [规则引擎] 开始分析问题: {question[:50]}...")
-        logger.info(f"🔍 [规则引擎] 可用工具: {available_tools}")
-        logger.info(f"🔍 [规则引擎] 知识库状态: {has_knowledge_base}")
-
-        question_lower = question.lower()
-
-        # ✅ 规则 1: 代码执行（最高优先级，优先级 1.1）
-        logger.info(f"🔍 [规则引擎] 检查代码执行关键词...")
-        code_keywords = ["使用代码", "执行代码", "用代码", "代码执行", "python代码", "运行代码"]
-        for kw in code_keywords:
-            if kw in question:
-                logger.info(f"🔍 [规则引擎] 匹配到关键词: '{kw}'")
-        if any(keyword in question for keyword in code_keywords):
-            logger.info(f"🔍 [规则引擎] 代码关键词匹配成功，检查 code_executor 可用性...")
-            if "code_executor" in available_tools:
-                logger.info("🎯 [规则引擎] 代码执行关键词")
-                # 提取表达式
-                expr_match = re.search(r'(\d+(?:\s*[\*\+\-\/]\s*\d+)+)', question)
-                if expr_match:
-                    expression = expr_match.group(1)
-                    code = f"print({expression})"
-
-        # 规则 2: 代码执行（最高优先级）
-        logger.info(f"🔍 [规则引擎] 检查代码执行关键词...")
-        code_keywords = ["使用代码", "执行代码", "用代码", "代码执行", "python代码", "运行代码"]
-        for kw in code_keywords:
-            if kw in question:
-                logger.info(f"🔍 [规则引擎] 匹配到关键词: '{kw}'")
-        if any(keyword in question for keyword in code_keywords):
-            logger.info(f"🔍 [规则引擎] 代码关键词匹配成功，检查 code_executor 可用性...")
-            if "code_executor" in available_tools:
-                logger.info("🎯 [规则引擎] 代码执行关键词")
-                # 提取表达式
-                expr_match = re.search(r'(\d+(?:\s*[\*\+\-\/]\s*\d+)+)', question)
-                if expr_match:
-                    expression = expr_match.group(1)
-                    code = f"print({expression})"
-                else:
-                    code = question
-                return {
-                    "reasoning": "用户明确要求使用代码执行",
-                    "tool": "code_executor",
-                    "parameters": {"code": code},
-                    "confidence": 0.98,
-                    "should_continue": False
-                }
-            else:
-                logger.info("🔍 [规则引擎] code_executor 不可用")
-
-        # 规则 3: 计算类问题
-        if any(keyword in question for keyword in ["计算", "算一下", "等于多少", "加", "减", "乘", "除"]):
-            # 检查是否有数字
-            if re.search(r'\d+', question):
-                # 优先级：code_executor > calculator
-                if "code_executor" in available_tools:
-                    logger.info("🎯 [规则引擎] 计算问题 → code_executor")
-                    expr_match = re.search(r'(\d+(?:\s*[\*\+\-\/]\s*\d+)+)', question)
-                    if expr_match:
-                        expression = expr_match.group(1)
-                        code = f"print({expression})"
-                    else:
-                        code = f"print('{question}')"
-                    return {
-                        "reasoning": "问题涉及计算，使用代码执行工具",
-                        "tool": "code_executor",
-                        "parameters": {"code": code},
-                        "confidence": 0.90,
-                        "should_continue": False
-                    }
-                elif "calculator" in available_tools:
-                    logger.info("🎯 [规则引擎] 计算问题 → calculator")
-                    return {
-                        "reasoning": "问题涉及计算，使用计算器工具",
-                        "tool": "calculator",
-                        "parameters": {"expression": question},
-                        "confidence": 0.90,
-                        "should_continue": False
-                    }
-
-        # 规则 4: 时间日期
-        if any(keyword in question for keyword in ["时间", "日期", "几点", "现在", "今天"]):
-            if "datetime" in available_tools:
-                logger.info("🎯 [规则引擎] 时间日期问题")
-                return {
-                    "reasoning": "询问时间或日期",
-                    "tool": "datetime",
-                    "parameters": {},
-                    "confidence": 0.95,
-                    "should_continue": False
-                }
-
-        # 规则 5: 问候类（不使用工具）
-        if any(keyword in question for keyword in ["你好", "hello", "hi", "嗨", "您好", "在吗"]):
-            logger.info("🎯 [规则引擎] 问候语")
-            return {
-                "reasoning": "问候语，不需要工具",
-                "tool": None,
-                "parameters": {},
-                "confidence": 0.95,
-                "should_continue": False
-            }
-
-        # 规则 6: 搜索类
-        if any(keyword in question for keyword in ["搜索", "查找", "什么是"]):
-            if "knowledge_search" in available_tools:
-                logger.info("🎯 [规则引擎] 搜索问题")
-                return {
-                    "reasoning": "需要搜索信息",
-                    "tool": "knowledge_search",
-                    "parameters": {"query": question},
-                    "confidence": 0.85,
-                    "should_continue": False
-                }
-
-        # ✅ 规则 7: 知识库默认规则（最低优先级，优先级 7）
-        # 如果用户选择了知识库，默认使用 knowledge_search（除非是明确的其他类型问题）
-        if has_knowledge_base and "knowledge_search" in available_tools:
-            logger.info("🎯 [规则引擎] 用户选择了知识库，默认使用知识库搜索")
-            return {
-                "reasoning": "用户选择了知识库，使用知识库搜索查询信息",
-                "tool": "knowledge_search",
-                "parameters": {"query": question},
-                "confidence": 0.80,  # 稍低的置信度，允许 LLM 覆盖
-                "should_continue": False
-            }
-
-        # 没有匹配规则
-        logger.info("📋 [规则引擎] 无匹配规则，返回 None")
-        return None
 
     def _build_reasoning_prompt(
         self,
@@ -344,10 +186,14 @@ class LLMReasoner:
         knowledge_base_hint = ""
         if has_knowledge_base:
             knowledge_base_hint = """
-⚠️ 重要提示：用户已经选择了知识库！如果问题涉及信息检索，请优先使用 knowledge_search 工具。
+✅ 用户已选择知识库：可以使用 knowledge_search 工具检索信息
+"""
+        else:
+            knowledge_base_hint = """
+❌ 用户未选择知识库：禁止使用 knowledge_search 工具（请直接回答或使用其他工具）
 """
 
-        prompt = f"""你是一个 Agent 工具决策系统。分析用户问题并返回 JSON 格式的决策。
+        prompt = f"""你是一个专业的智能体工具决策专家。
 
 # 可用工具
 {tool_descriptions}
@@ -357,99 +203,40 @@ class LLMReasoner:
 
 {knowledge_base_hint}
 
-# ⚠️ 强制规则（不可违反）
+# 🎯 核心决策原则
 
-当检测到以下模式时，**必须**选择对应工具：
+1. **理解用户意图**: 仔细分析用户真正想要做什么
+2. **工具优先级**:
+   - 用户明确要求使用某个工具 → 优先使用该工具
+   - 计算问题 → 优先使用 code_executor（更精确）
+   - 时间/日期 → datetime
+   - 网页操作 → browser
+   - 信息检索 → 仅在用户已选择知识库时使用 knowledge_search
+3. **直接回答场景**:
+   - 问候、闲聊不需要工具
+   - 用户未选择知识库时，信息类问题应直接回答
+4. **参数完整性**: 确保工具所需参数完整且正确
 
-1. 包含 "使用代码"、"执行代码" → **tool: "code_executor"**
-2. 包含 "计算"、"算一下" 且有数字 → **tool: "calculator"** 或 **tool: "code_executor"**
-3. 包含 "时间"、"日期"、"几点" → **tool: "datetime"**
-4. 包含 URL（http/https）或"总结这个网页"、"访问" → **tool: "browser"**, **action: "scrape"**, 提取 URL
-5. 包含"搜索网页"、"网上搜索" → **tool: "browser"**, **action: "search"**
-6. 仅问候（"你好"、"hi"） → **tool: null**
+# 输出格式（纯 JSON）
 
-# 🎯 关键指令
-- 用户明确说"使用XX工具"时，**必须**使用该工具
-- browser 工具必须包含 action 参数（scrape/search/navigate）
-- 如果问题包含 URL，使用 action="scrape" 并在参数中包含 url
-- 不要认为可以"直接计算"，必须使用工具
-- 如果不确定，**优先使用工具**
-
-# 📋 输出格式（纯 JSON，不要其他内容）
-
-```json
 {{
-  "reasoning": "简要分析（50字以内）",
-  "tool": "工具名称（code_executor/calculator/datetime/knowledge_search/browser/file 或 null）",
+  "reasoning": "分析过程（简要说明为什么选择或不选择工具）",
+  "tool": "工具名称或 null",
   "parameters": {{}},
   "confidence": 0.95,
   "should_continue": false
 }}
-```
 
-# 💡 示例
+# 💡 决策示例
 
-输入：使用代码帮我计算909090*787978
-输出：
-```json
-{{
-  "reasoning": "用户明确要求使用代码，必须用code_executor",
-  "tool": "code_executor",
-  "parameters": {{"code": "print(909090*787978)"}},
-  "confidence": 0.98,
-  "should_continue": false
-}}
-```
+- "使用代码帮我计算 100 * 200" → {{"tool": "code_executor", "parameters": {{"code": "print(100 * 200)"}}}}
+- "现在几点了" → {{"tool": "datetime", "parameters": {{}}}}
+- "你好" → {{"tool": null, "parameters": {{}}}}
+- "搜索python教程"（已选择知识库） → {{"tool": "knowledge_search", "parameters": {{"query": "python教程"}}}}
+- "什么是模型服务"（未选择知识库） → {{"tool": null, "parameters": {{}}, "reasoning": "用户未选择知识库，直接回答问题"}}
+- "总结这个网页 https://example.com" → {{"tool": "browser", "parameters": {{"action": "scrape", "url": "https://example.com"}}}}
 
-输入：现在几点了？
-输出：
-```json
-{{
-  "reasoning": "询问时间，必须使用datetime工具",
-  "tool": "datetime",
-  "parameters": {{}},
-  "confidence": 0.95,
-  "should_continue": false
-}}
-```
-
-输入：你好
-输出：
-```json
-{{
-  "reasoning": "问候语，无需工具",
-  "tool": null,
-  "parameters": {{}},
-  "confidence": 0.95,
-  "should_continue": false
-}}
-```
-
-输入：帮我总结一下这个网页 http://example.com/article
-输出：
-```json
-{{
-  "reasoning": "用户要求总结网页内容，需要使用browser工具抓取页面",
-  "tool": "browser",
-  "parameters": {{"action": "scrape", "url": "http://example.com/article"}},
-  "confidence": 0.95,
-  "should_continue": false
-}}
-```
-
-输入：搜索 python 教程
-输出：
-```json
-{{
-  "reasoning": "用户要求搜索信息，需要使用browser工具搜索",
-  "tool": "browser",
-  "parameters": {{"action": "search", "text": "python 教程"}},
-  "confidence": 0.95,
-  "should_continue": false
-}}
-```
-
-# 🚀 现在分析并返回 JSON（仅返回 JSON，不要其他文字）：
+现在请分析并返回 JSON：
 """
 
         return prompt
@@ -788,6 +575,10 @@ false
             # 解析提取的 JSON 字符串
             try:
                 data = json.loads(json_str)
+                # 检查是否解析为 None（JSON "null"）
+                if data is None:
+                    logger.warning("⚠️ [JSON 解析] JSON 解析结果为 null，使用默认值")
+                    data = {}
                 logger.info(f"✅ [JSON 解析] JSON 解析成功")
             except json.JSONDecodeError as e:
                 logger.error(f"❌ [JSON 解析] JSON 解析失败: {e}")

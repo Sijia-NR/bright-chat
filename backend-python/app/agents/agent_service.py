@@ -728,8 +728,9 @@ class AgentService:
     async def _think_node(self, state: AgentState) -> AgentState:
         """思考节点：决定下一步行动（不可变状态更新）"""
         # 从状态中获取配置（使用双下划线键名）
-        agent_config = state.get("__agent_config", {})
-        max_steps = agent_config.get("config", {}).get("max_steps", DEFAULT_MAX_STEPS)
+        agent_config = state.get("__agent_config") or {}
+        config = agent_config.get("config") or {}
+        max_steps = config.get("max_steps", DEFAULT_MAX_STEPS)
         current_steps = state.get(STATE_STEPS, 0)
 
         logger.info(f"🤔 [思考节点] 开始思考...")
@@ -792,8 +793,8 @@ class AgentService:
                 tool_name=tool_name,
                 parameters=parameters,
                 context={
-                    "user_id": state.get("_config", {}).get("user_id"),
-                    "knowledge_base_ids": agent_config.get("knowledge_base_ids", [])
+                    "user_id": (state.get("_config") or {}).get("user_id"),
+                    "knowledge_base_ids": agent_config.get("knowledge_base_ids") or []
                 }
             )
 
@@ -829,150 +830,31 @@ class AgentService:
         available_tools: List[str],
         agent_config: Dict[str, Any]
     ) -> Optional[tuple]:
-        """决定使用哪个工具"""
-        # 防御性处理：确保 agent_config 不是 None
+        """
+        简化的工具决策（主要决策由 LLM 完成）
+
+        注意：这个方法现在只是一个轻量级后备方案
+        真正的决策应该由 LLMReasoner.reason() 完成
+        """
+        logger.warning(f"⚠️ 使用 _decide_tool 后备方案（非 LLM 决策）")
+
+        # 防御性处理
         if agent_config is None:
             agent_config = {}
 
-        # 新增工具关键词
-        CODE_KEYWORDS = ("执行", "运行", "计算", "代码", "python", "程序")
-        BROWSER_KEYWORDS = ("搜索", "浏览", "访问", "网页", "网站", "爬虫", "抓取")
-        FILE_KEYWORDS = ("保存", "写入", "读取", "文件", "创建文件")
-
-        # 优先级 1: 检查代码执行（需要明确的前缀）
-        if "code_executor" in available_tools:
-            import re
-
-            # ✅ 新增：检测用户明确要求使用代码的关键词
-            code_explicit_keywords = ["使用代码", "执行代码", "用代码", "代码执行", "python代码", "运行代码"]
-            has_explicit_code_request = any(kw in input_text for kw in code_explicit_keywords)
-
-            # 检查是否有明确的代码执行前缀
-            code_prefix_patterns = [
-                r'^执行代码[：:]\s*',
-                r'^运行代码[：:]\s*',
-                r'^运行[：:]\s*',
-                r'^代码[：:]\s*',
-                r'^python[：:]\s*',
-                r'^程序[：:]\s*',
-            ]
-            has_code_prefix = any(re.search(pattern, input_text, re.IGNORECASE) for pattern in code_prefix_patterns)
-
-            # 检查是否有 markdown 代码块
-            has_code_block = re.search(r'```(?:python)?\n?', input_text, re.IGNORECASE) is not None
-
-            # 检查是否有代码关键词（不包括纯"计算"，因为可能是指数学计算）
-            has_code_keyword = any(kw in input_text for kw in ("执行", "运行", "代码", "python", "程序"))
-
-            # ✅ 优先级调整：明确请求使用代码 > 代码前缀 > 代码块 > 代码关键词
-            if has_explicit_code_request:
-                logger.info(f"🎯 [工具决策] 用户明确要求使用代码: {input_text[:50]}...")
-                # 提取数学表达式（如果有）
-                expr_match = re.search(r'(\d+(?:\s*[\*\+\-\/]\s*\d+)+)', input_text)
-                if expr_match:
-                    expression = expr_match.group(1)
-                    code = f"print({expression})"
-                    logger.info(f"🎯 [工具决策] 提取表达式: {expression}")
-                else:
-                    code = input_text
-                return "code_executor", {"code": code}
-
-            if has_code_prefix or has_code_block or (has_code_keyword and "计算" not in input_text.split()[0] if input_text else False):
-                # 提取代码部分
-                code_match = re.search(r'```(?:python)?\n?(.*?)```', input_text, re.DOTALL)
-                if code_match:
-                    code = code_match.group(1).strip()
-                else:
-                    # 移除常见前缀
-                    code = input_text
-                    for pattern in code_prefix_patterns:
-                        code = re.sub(pattern, '', code, flags=re.IGNORECASE).strip()
-                    # 如果移除前缀后为空，使用原始输入
-                    if not code:
-                        code = input_text
-
-                return "code_executor", {"code": code}
-
-        # 优先级 2: 检查计算器（仅当没有代码执行意图时）
-        if TOOL_CALCULATOR in available_tools and any(op in input_text for op in CALC_OPS):
-            return TOOL_CALCULATOR, {"expression": input_text}
-
-        # 优先级 3: 检查时间查询
-        if TOOL_DATETIME in available_tools and any(kw in input_text for kw in DATETIME_KEYWORDS):
-            return TOOL_DATETIME, {}
-
-        # 检查浏览器操作
-        if "browser" in available_tools and any(kw in input_text for kw in BROWSER_KEYWORDS):
-            # 提取 URL（如果有）
-            import re
-            url_match = re.search(r'https?://[^\s]+', input_text)
-            url = url_match.group(0) if url_match else None
-
-            # 判断操作类型
-            if "搜索" in input_text or "search" in input_text.lower():
-                query = re.sub(r'(搜索|search|网页|网站).*?(https?://\S+)?', '', input_text).strip()
-                return "browser", {
-                    "action": "search",
-                    "text": query or input_text
-                }
-            elif url:
-                return "browser", {
-                    "action": "scrape",
-                    "url": url
-                }
-            else:
-                return "browser", {
-                    "action": "navigate",
-                    "url": "https://www.google.com"
-                }
-
-        # 检查文件操作
-        if "file" in available_tools and any(kw in input_text for kw in FILE_KEYWORDS):
-            # 改进的文件操作推断
-            import re
-
-            # 提取文件名
-            filename_match = re.search(r'["\']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)["\']?', input_text)
-            filename = filename_match.group(1) if filename_match else None
-
-            # 如果没有文件扩展名，尝试其他模式
-            if not filename:
-                filename_match = re.search(r'文件\s*["\']?([a-zA-Z0-9_\-./]+)["\']?', input_text)
-                filename = filename_match.group(1) if filename_match else "output.txt"
-
-            if "保存" in input_text or "写入" in input_text or "创建文件" in input_text:
-                # 提取文件内容
-                content_match = re.search(r'内容为[：:]\s*["\']?(.+?)["\']?$', input_text)
-                content = content_match.group(1).strip() if content_match else input_text
-
-                return "file", {
-                    "action": "write",
-                    "path": filename,
-                    "content": content
-                }
-            elif "读取" in input_text or "打开" in input_text:
-                return "file", {
-                    "action": "read",
-                    "path": filename
-                }
-            elif "列出" in input_text:
-                # 提取目录路径
-                dir_match = re.search(r'(?:目录|文件夹|路径)\s*["\']?([a-zA-Z0-9_\-./]*)["\']?', input_text)
-                dir_path = dir_match.group(1) if dir_match else "."
-
-                return "file", {
-                    "action": "list",
-                    "path": dir_path
-                }
-
-        # 检查知识库搜索（默认工具，优先级最低）
+        # 最小化的后备规则：仅检查知识库
         if TOOL_KNOWLEDGE_SEARCH in available_tools:
-            return TOOL_KNOWLEDGE_SEARCH, {
-                "query": input_text,
-                "knowledge_base_ids": agent_config.get("knowledge_base_ids", []),
-                "top_k": DEFAULT_TOP_K
-            }
+            kb_ids = agent_config.get("knowledge_base_ids", [])
+            if kb_ids and len(kb_ids) > 0:
+                logger.info(f"🎯 [后备决策] 使用知识库搜索")
+                return TOOL_KNOWLEDGE_SEARCH, {
+                    "query": input_text,
+                    "knowledge_base_ids": kb_ids,
+                    "top_k": DEFAULT_TOP_K
+                }
 
+        # 默认返回 None，让 LLM 处理
+        logger.info(f"📋 [后备决策] 不使用工具，由 LLM 决策")
         return None
 
     async def _observe_node(self, state: AgentState) -> AgentState:
@@ -1003,7 +885,9 @@ class AgentService:
         logger.info(f"👀️ [观察节点] 已调用工具数: {len(tools_called)}")
 
         # 3. 如果已经标记为完成或 LLM 认为不应该继续,生成最终答案
-        if finished or not should_continue or not state.get("tool_decision", {}).get("tool"):
+        tool_decision = state.get("tool_decision") or {}
+        has_tool = bool(tool_decision.get("tool"))
+        if finished or not should_continue or not has_tool:
             logger.info(f"✅ [观察节点] 生成最终答案")
             final_answer = await self._generate_final_answer(state)
             return {
@@ -1083,25 +967,13 @@ class AgentService:
         logger.info(f"📝 [生成最终答案] 工具调用数: {len(tools_called)}")
         logger.info(f"📝 [生成最终答案] reasoning 内容: '{reasoning[:200] if reasoning else '(空)'}'")
 
-        # 如果没有调用任何工具,使用推理结果
-        if not tools_called:
-            logger.info(f"📝 [生成最终答案] 无工具调用,使用推理结果")
-            # 如果 reasoning 为空或只是推理过程，生成友好回复
-            if not reasoning:
-                logger.warning("⚠️ [生成最终答案] reasoning 为空，使用默认回复")
-                return "我收到你的问题了，但目前无法提供具体答案。"
-            elif "打招呼" in reasoning or "问候" in reasoning:
-                return "你好！有什么我可以帮助你的吗？"
-            elif "可以直接回答" in reasoning:
-                return f"关于「{original_question}」这个问题，我理解了你的意思，但暂时没有更多信息可以提供。"
-            else:
-                return reasoning
-
-        # ✅ 修复：无论是单个工具还是多个工具，都使用 LLM 生成最终答案
+        # ✅ 修复：无论是否使用工具，都使用 LLM 生成最终答案
         logger.info(f"📝 [生成最终答案] 使用 LLM 生成最终答案，工具调用数: {len(tools_called)}")
 
         # 构建提示词
-        prompt = f"""你是智能助手，需要基于工具调用结果，生成一个清晰、准确、友好的答案来回答用户问题。
+        if tools_called:
+            # 有工具调用：基于工具结果生成答案
+            prompt = f"""你是智能助手，需要基于工具调用结果，生成一个清晰、准确、友好的答案来回答用户问题。
 
 ## 用户原始问题
 
@@ -1111,13 +983,19 @@ class AgentService:
 
 """
 
-        for i, call in enumerate(tools_called, 1):
-            tool_name = call.get('tool', 'unknown')
-            result = call.get('result', {})
+            for i, call in enumerate(tools_called, 1):
+                tool_name = call.get('tool', 'unknown')
+                result = call.get('result', {})
+
+            # ✅ 修复：确保 result 不是 None
+            if result is None:
+                result = {}
 
             # 根据工具类型格式化结果
             if tool_name == "browser":
-                action = call.get('parameters', {}).get('action', 'unknown')
+                # ✅ 修复：确保 parameters 不是 None
+                parameters = call.get('parameters') or {}
+                action = parameters.get('action', 'unknown')
                 if action == "scrape":
                     data = result.get('data', {}) if isinstance(result, dict) else {}
                     title = data.get('title', '')
@@ -1170,7 +1048,7 @@ class AgentService:
                 prompt += f"### 工具 {i}: {tool_name}\n"
                 prompt += f"- 结果: {str(result)[:3000]}\n\n"
 
-        prompt += f"""
+            prompt += f"""
 ## 任务要求
 
 请基于以上工具调用结果，生成最终的答案给用户。
@@ -1190,6 +1068,24 @@ class AgentService:
 - 如果是代码执行：解释代码做了什么，给出结果
 
 请生成最终答案（直接输出答案，不要有前缀）:"""
+        else:
+            # 无工具调用：直接让 LLM 回答问题
+            prompt = f"""你是智能助手，请回答用户的问题。
+
+## 用户问题
+
+{original_question}
+
+## 要求
+
+1. 直接回答问题，不要重复问题
+2. 答案应该准确、专业、友好
+3. 如果问题涉及专业知识，请提供详细的解释
+4. 使用自然、流畅的语言
+5. 答案长度适中（通常 100-500 字）
+
+请直接输出答案，不要包含任何解释性文字或前缀：
+"""
 
         try:
             # 调用 LLM 生成最终答案
@@ -1296,7 +1192,8 @@ class AgentService:
             # 浏览器操作结果
             if isinstance(result, dict):
                 if result.get("success"):
-                    action = tool_call.get("parameters", {}).get("action", "unknown")
+                    parameters = tool_call.get("parameters") or {}
+                    action = parameters.get("action", "unknown")
                     data = result.get("data", {})
 
                     if action == "search":
@@ -1325,7 +1222,8 @@ class AgentService:
             # 文件操作结果
             if isinstance(result, dict):
                 if result.get("success"):
-                    action = tool_call.get("parameters", {}).get("action", "unknown")
+                    parameters = tool_call.get("parameters") or {}
+                    action = parameters.get("action", "unknown")
                     data = result.get("data", {})
 
                     if action == "read":
@@ -1623,6 +1521,7 @@ class AgentService:
             # 执行工作流（流式输出中间步骤）
             step_num = 0
             final_state = None  # 保存最终状态
+            previous_tools_count = 0  # 跟踪上一步骤的工具调用数量
 
             async for event_state in graph.astream(state):
                 for node_name, node_state in event_state.items():
@@ -1699,16 +1598,21 @@ class AgentService:
                             }
 
                     tools_called = node_state.get(STATE_TOOLS_CALLED, [])
-                    if tools_called:
-                        for idx, tool_call in enumerate(tools_called, 1):
+                    current_tools_count = len(tools_called)
+
+                    # ✅ 修复：只发送新增的工具调用事件（避免重复）
+                    if current_tools_count > previous_tools_count:
+                        # 只发送新增的工具调用
+                        new_tools = tools_called[previous_tools_count:]
+                        for idx, tool_call in enumerate(new_tools, 1):
                             tool_name = tool_call.get("tool", "unknown")
                             parameters = tool_call.get("parameters", {})
                             result = tool_call.get("result", "")
 
-                            logger.info(f"  🔧 [工具调用 #{idx}] 工具: {tool_name}")
-                            logger.info(f"  🔧 [工具调用 #{idx}] 参数: {parameters}")
-                            logger.info(f"  🔧 [工具调用 #{idx}] 结果长度: {len(str(result))} 字符")
-                            logger.info(f"  🔧 [工具调用 #{idx}] 结果预览: {str(result)[:150]}...")
+                            logger.info(f"  🔧 [新工具调用 #{previous_tools_count + idx}] 工具: {tool_name}")
+                            logger.info(f"  🔧 [新工具调用 #{previous_tools_count + idx}] 参数: {parameters}")
+                            logger.info(f"  🔧 [新工具调用 #{previous_tools_count + idx}] 结果长度: {len(str(result))} 字符")
+                            logger.info(f"  🔧 [新工具调用 #{previous_tools_count + idx}] 结果预览: {str(result)[:150]}...")
 
                             yield {
                                 "type": EVENT_TYPE_TOOL_CALL,
@@ -1717,6 +1621,9 @@ class AgentService:
                                 "result": result,
                                 "timestamp": datetime.now().isoformat()
                             }
+
+                        # 更新工具调用计数
+                        previous_tools_count = current_tools_count
 
                     node_duration = (datetime.now() - node_start_time).total_seconds()
                     logger.info(f"⏱️  [节点执行] 耗时: {node_duration:.3f}秒")

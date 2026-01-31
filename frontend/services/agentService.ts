@@ -38,8 +38,13 @@ const MOCK_AGENTS: Agent[] = [
   }
 ];
 
-// 获取认证头
+// 获取认证头（GET 请求 - 不需要 Content-Type）
 const getAuthHeaders = () => ({
+  'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+});
+
+// 获取认证头（POST/PUT 请求 - 需要 Content-Type）
+const getAuthHeadersWithJson = () => ({
   'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
   'Content-Type': 'application/json'
 });
@@ -57,6 +62,7 @@ export interface AgentChatRequest {
   query: string;  // 关键：使用 query 字段，不是 message
   session_id?: string;
   stream?: boolean;
+  knowledge_base_ids?: string[];  // 运行时选择的知识库ID列表（可选）
   [key: string]: any;
 }
 
@@ -108,7 +114,7 @@ export const agentService = {
 
     const response = await fetch(`${CONFIG.API_BASE_URL}/agents/`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getAuthHeadersWithJson(),
       body: JSON.stringify(data)
     });
 
@@ -207,7 +213,7 @@ export const agentService = {
   async updateAgent(agentId: string, data: UpdateAgentRequest): Promise<Agent> {
     const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}`, {
       method: 'PUT',
-      headers: getAuthHeaders(),
+      headers: getAuthHeadersWithJson(),
       body: JSON.stringify(data)
     });
 
@@ -255,7 +261,7 @@ export const agentService = {
 
     const response = await fetch(`${CONFIG.API_BASE_URL}/agents/${agentId}/chat`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getAuthHeadersWithJson(),
       body: JSON.stringify(request)
     });
 

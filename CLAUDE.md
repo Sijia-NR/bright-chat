@@ -176,7 +176,7 @@ Frontend uses service objects in `services/` directory for all API calls:
 
 ### Agent Models
 
-**Agent**: id, name, display_name, description, agent_type (rag/tool/custom), system_prompt, knowledge_base_ids (JSON), tools (JSON), config (JSON), is_active, created_by, created_at, updated_at
+**Agent**: id, name, display_name, description, agent_type (rag/tool/custom), system_prompt, knowledge_base_ids (JSON), tools (JSON), config (JSON), llm_model_id, enable_knowledge, order, is_active, created_by, created_at, updated_at
 
 **AgentExecution**: id, agent_id, user_id, session_id, input_prompt, status (running/completed/failed), steps, result, error_message, execution_log (JSON), started_at, completed_at
 
@@ -193,6 +193,8 @@ Frontend uses service objects in `services/` directory for all API calls:
 - `browser` - Web browsing, search, scraping
 - `file` - File operations (read/write/list)
 
+📖 **详细接口说明**: [智能体接口文档 v0.1](docs/智能体接口文档(0.1版本).md)
+
 ### Knowledge Base Models
 
 **KnowledgeGroup**: id, name, description, user_id, color, created_at
@@ -204,6 +206,8 @@ Frontend uses service objects in `services/` directory for all API calls:
 **Vector Storage** (ChromaDB):
 - Collection: `knowledge_chunks`
 - Metadata per chunk: document_id, knowledge_base_id, user_id, chunk_index, filename, file_type
+
+📖 **详细接口说明**: [知识库接口文档](docs/知识库接口文档(正式).md)
 
 ---
 
@@ -269,123 +273,79 @@ Critical variables to modify in production:
 
 ---
 
-## API Endpoint Structure
+## API Documentation
 
-### Authentication Endpoints
+### Interactive API Docs
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/auth/login` | POST | Public | User authentication |
-| `/api/v1/auth/logout` | POST | Authenticated | Session termination |
+- **Swagger UI**: `http://localhost:8080/docs` (交互式 API 文档)
+- **ReDoc**: `http://localhost:8080/redoc` (精美的 API 参考文档)
 
-### User Management (Admin)
+### Detailed API References
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/admin/users` | GET | Admin | List all users |
-| `/api/v1/admin/users` | POST | Admin | Create user |
-| `/api/v1/admin/users/{user_id}` | GET | Admin | Get user details |
-| `/api/v1/admin/users/{user_id}` | PUT | Admin | Update user |
-| `/api/v1/admin/users/{user_id}` | DELETE | Admin | Delete user |
+项目包含完整的 API 接口文档，位于 `docs/` 目录：
 
-### Session & Message Endpoints
+| 模块 | 文档 | 路径 | 说明 |
+|------|------|------|------|
+| **智能体** | [智能体接口文档 v0.1](docs/智能体接口文档(0.1版本).md) | `docs/智能体接口文档(0.1版本).md` | Agent 管理、聊天、执行历史、工具列表等完整接口说明 |
+| **知识库** | [知识库接口文档](docs/知识库接口文档(正式).md) | `docs/知识库接口文档(正式).md` | 知识库 CRUD、文档上传、向量搜索等接口 |
+| **通用 API** | [API 文档](docs/API.md) | `docs/API.md` | 认证、用户、会话、模型等核心接口 |
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/sessions` | GET | Authenticated | Get user sessions |
-| `/api/v1/sessions` | POST | Authenticated | Create session (with agent_id) |
-| `/api/v1/sessions/{session_id}/messages` | GET | Authenticated | Get session messages |
-| `/api/v1/sessions/{session_id}/messages` | POST | Authenticated | Save messages |
-| `/api/v1/sessions/{session_id}` | DELETE | Authenticated | Delete session |
+### API Endpoint Summary
 
-### LLM Model Endpoints
+**基础路径**: `/api/v1`
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/models/active` | GET | Authenticated | Get active models (no API keys) |
-| `/api/v1/admin/models` | GET | Admin | List all models (with API keys) |
-| `/api/v1/admin/models` | POST | Admin | Create model |
-| `/api/v1/admin/models/{model_id}` | GET | Admin | Get model details |
-| `/api/v1/admin/models/{model_id}` | PUT | Admin | Update model |
-| `/api/v1/admin/models/{model_id}` | DELETE | Admin | Delete model |
-| `/api/v1/lmp-cloud-ias-server/...` | POST | Authenticated | LLM chat proxy (streaming) |
+**主要模块**:
+- `/auth` - 用户认证
+- `/admin/users` - 用户管理（管理员）
+- `/sessions` - 会话管理
+- `/models` - LLM 模型配置
+- `/agents` - 智能体管理 → [详细文档](docs/智能体接口文档(0.1版本).md)
+- `/knowledge` - 知识库管理 → [详细文档](docs/知识库接口文档(正式).md)
+- `/messages` - 消息收藏
+- `/favorites` - 收藏管理
 
-### Agent Endpoints (NEW)
+### Quick Reference
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/agents/` | GET | Authenticated | List all agents |
-| `/api/v1/agents/` | POST | Admin | Create agent |
-| `/api/v1/agents/{agent_id}` | GET | Authenticated | Get agent details |
-| `/api/v1/agents/{agent_id}` | PUT | Admin | Update agent |
-| `/api/v1/agents/{agent_id}` | DELETE | Admin | Delete agent |
-| `/api/v1/agents/{agent_id}/chat` | POST | Authenticated | Agent chat (SSE streaming) |
-| `/api/v1/agents/{agent_id}/executions/` | GET | Authenticated | Get execution history |
-| `/api/v1/agents/tools/` | GET | Authenticated | List available tools |
-| `/api/v1/agents/service-health/` | GET | Public | Agent service health check |
+**认证方式**: Bearer Token
+```bash
+# 获取 Token
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"pwd123"}'
 
-**Agent Chat Request Format**:
-```json
-{
-  "query": "用户消息或问题",
-  "session_id": "optional-session-id",
-  "stream": true
-}
+# 使用 Token
+curl http://localhost:8080/api/v1/agents/ \
+  -H "Authorization: Bearer <token>"
 ```
 
-**Agent Chat SSE Events**:
-- `{"type": "start", "execution_id": "...", "agent_name": "...", "query": "..."}`
-- `{"type": "step", "node": "think/act/observe", "step": 1, "state": {...}}`
-- `{"type": "tool_call", "tool": "calculator", "parameters": {...}, "result": "..."}`
-- `{"type": "complete", "output": "...", "steps": 3, "duration": 1.5}`
-- `{"type": "error", "error": "..."}`
+**接口权限**:
+- `Public` - 无需认证
+- `Authenticated` - 需要登录
+- `Admin` - 仅管理员
 
-### Knowledge Base Endpoints (NEW)
+**响应格式**:
+- 成功: `200 OK` + JSON 数据
+- 错误: `4xx/5xx` + `{"detail": "错误信息"}`
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/knowledge/groups` | GET | Authenticated | List user's groups |
-| `/api/v1/knowledge/groups` | POST | Authenticated | Create group |
-| `/api/v1/knowledge/groups/{group_id}` | DELETE | Authenticated | Delete group |
-| `/api/v1/knowledge/bases` | GET | Authenticated | List knowledge bases |
-| `/api/v1/knowledge/bases` | POST | Authenticated | Create knowledge base |
-| `/api/v1/knowledge/bases/{kb_id}` | GET | Authenticated | Get KB details |
-| `/api/v1/knowledge/bases/{kb_id}` | DELETE | Authenticated | Delete KB |
-| `/api/v1/knowledge/bases/{kb_id}/documents` | GET | Authenticated | List documents |
-| `/api/v1/knowledge/bases/{kb_id}/documents` | POST | Authenticated | Upload document |
-| `/api/v1/knowledge/bases/{kb_id}/documents/{doc_id}` | GET | Authenticated | Get document |
-| `/api/v1/knowledge/bases/{kb_id}/documents/{doc_id}` | DELETE | Authenticated | Delete document |
-| `/api/v1/knowledge/bases/{kb_id}/documents/{doc_id}/chunks` | GET | Authenticated | Get document chunks |
-| `/api/v1/knowledge/search` | GET | Authenticated | Semantic search |
+### SSE Streaming
 
-**Document Upload Parameters**:
-- `file`: Document file (PDF, DOCX, TXT, MD, HTML, XLS, XLSX, PPT, PPTX)
-- `sync`: true for immediate processing, false for background (default)
-- `chunk_size`: Text chunk size (default: 500)
-- `chunk_overlap`: Chunk overlap (default: 50)
+Agent 聊天和 LLM 聊天使用 **Server-Sent Events (SSE)** 协议进行流式响应：
 
-**Search Parameters**:
-- `query`: Search query text
-- `knowledge_base_ids`: Comma-separated KB IDs (optional, searches all if omitted)
-- `top_k`: Number of results (default: 5)
+```javascript
+const response = await fetch('/api/v1/agents/{id}/chat', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ query: '你好' })
+});
 
-### Favorite Endpoints
+const reader = response.body.getReader();
+// 处理 SSE 流...
+```
 
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/api/v1/messages/{message_id}/favorite` | POST | Authenticated | Add favorite |
-| `/api/v1/messages/{message_id}/favorite` | DELETE | Authenticated | Remove favorite |
-| `/api/v1/favorites` | GET | Authenticated | List favorites |
-| `/api/v1/messages/{message_id}/favorite-status` | GET | Authenticated | Check status |
-
-### System Endpoints
-
-| Endpoint | Method | Access | Description |
-|----------|--------|--------|-------------|
-| `/health` | GET | Public | Basic health check |
-| `/api/v1/system/health` | GET | Authenticated | Detailed health (DB, ChromaDB, BGE) |
-
-API docs available at: `http://localhost:18080/docs`
+详细的事件格式参见 [智能体接口文档](docs/智能体接口文档(0.1版本).md)。
 
 ---
 
@@ -554,10 +514,16 @@ Documents process in background with retry:
 - `KnowledgeSelector.tsx` - Multi-select for knowledge bases
 - `KnowledgeBaseDetail.tsx` - Knowledge base with document list
 - `DocumentChunksDetail.tsx` - Document chunk viewer
+- `CreateKnowledgeBaseModal.tsx` - Create knowledge base dialog
+- `KnowledgeManageModal.tsx` - Knowledge base management dialog
+
+📖 **相关接口**: [知识库接口文档](docs/知识库接口文档(正式).md)
 
 ---
 
 ## Testing
+
+### Test Files
 
 Test files in `backend-python/`:
 - `comprehensive_regression_test.py` - Full regression test suite
@@ -567,12 +533,34 @@ Test files in `backend-python/`:
 - `test_agent_*.py` - Agent-specific tests
 - `test_rag_*.py` - RAG/knowledge base tests
 
-Run with pytest (requires test environment setup):
+### Running Tests
+
 ```bash
 cd backend-python
+
+# Run all tests
 pytest -v
-pytest tests/test_agent_chat.py -v  # Run specific test
+
+# Run specific test
+pytest tests/test_agent_chat.py -v
+
+# Run with coverage
+pytest --cov=app tests/
+
+# Run specific test module
+pytest tests/test_agent_api.py -v
 ```
+
+### API Testing
+
+**Interactive API Testing**:
+- Swagger UI: http://localhost:8080/docs
+- ReDoc: http://localhost:8080/redoc
+
+**Command-Line Testing**:
+See detailed API documentation for curl examples:
+- [智能体接口文档](docs/智能体接口文档(0.1版本).md) - Agent API examples
+- [知识库接口文档](docs/知识库接口文档(正式).md) - Knowledge Base API examples
 
 ---
 
@@ -605,6 +593,7 @@ pytest tests/test_agent_chat.py -v  # Run specific test
    - Add models to `backend-python/app/models/`
    - Add routes to `minimal_api.py` (or modular router)
    - Update `frontend/services/*.ts` for API calls
+   - 📝 Update relevant API documentation in `docs/`
 
 2. **Frontend Changes**:
    - Add types to `frontend/types.ts`
@@ -615,27 +604,36 @@ pytest tests/test_agent_chat.py -v  # Run specific test
    - Write tests in `backend-python/tests/`
    - Test with `pytest -v`
    - Verify frontend with browser DevTools
+   - Use Swagger UI (`http://localhost:8080/docs`) for API testing
 
 ### Agent Development
+
+📖 **参考**: [智能体接口文档 v0.1](docs/智能体接口文档(0.1版本).md)
 
 To add a new tool to Agent:
 1. Implement tool function in `backend-python/app/agents/tools/`
 2. Register in `AgentService._register_default_tools()`
 3. Update `AgentService._decide_tool()` for tool selection logic
 4. Add output formatting in `AgentService._format_tool_output()`
+5. Update API documentation with tool parameters
 
 ### Knowledge Base Development
+
+📖 **参考**: [知识库接口文档](docs/知识库接口文档(正式).md)
 
 To add new document type support:
 1. Add loader to `DocumentProcessor.load_document()`
 2. Update `SUPPORTED_FILE_TYPES` in `rag/config.py`
 3. Test with `test_rag_endpoints.sh`
+4. Update API documentation with new file types
 
 ---
 
 ## Troubleshooting
 
-### Backend Won't Start
+### Common Issues and Solutions
+
+#### Backend Won't Start
 
 ```bash
 # Check database connection
@@ -648,21 +646,31 @@ curl http://localhost:8002/api/v1/heartbeat
 docker logs -f AIWorkbench-backend
 ```
 
-### Agent Chat Not Working
+#### Agent Chat Not Working
+
+📖 **参考**: [智能体接口文档 - 故障排查](docs/智能体接口文档(0.1版本).md)
 
 ```bash
 # Check agent service health
-curl http://localhost:18080/api/v1/agents/service-health/
+curl http://localhost:8080/api/v1/agents/service-health/
 
 # Verify agent exists
-curl http://localhost:18080/api/v1/agents/
+curl http://localhost:8080/api/v1/agents/
 
 # Check LangGraph dependencies
 pip list | grep langgraph
 pip list | grep langchain
+
+# Test agent chat
+curl -X POST http://localhost:8080/api/v1/agents/{id}/chat \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "测试"}'
 ```
 
-### Knowledge Base Search Returns No Results
+#### Knowledge Base Search Returns No Results
+
+📖 **参考**: [知识库接口文档 - 故障排查](docs/知识库接口文档(正式).md)
 
 ```bash
 # Check ChromaDB collection
@@ -673,4 +681,22 @@ ls -la /data1/allresearchProject/Bright-Chat/models/
 
 # Test embedding
 python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('bge-large-zh-v1.5'); print(model.encode('test').shape)"
+
+# Test knowledge search
+curl "http://localhost:8080/api/v1/knowledge/search?query=测试&knowledge_base_ids=<kb_id>&top_k=5" \
+  -H "Authorization: Bearer <token>"
 ```
+
+### API Testing
+
+Use the interactive Swagger UI for quick API testing:
+- **Swagger UI**: http://localhost:8080/docs
+- **ReDoc**: http://localhost:8080/redoc
+
+Or use curl with examples from the API documentation.
+
+### Documentation
+
+- **智能体接口**: [智能体接口文档 v0.1](docs/智能体接口文档(0.1版本).md)
+- **知识库接口**: [知识库接口文档](docs/知识库接口文档(正式).md)
+- **完整 API**: [API 文档](docs/API.md)

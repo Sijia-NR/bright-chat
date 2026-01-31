@@ -33,13 +33,14 @@ const AGENT_TYPES = [
   { value: 'custom', label: '自定义型', color: 'bg-green-100 text-green-600' },
 ];
 
-// 可用工具（必须与后端 AVAILABLE_TOOLS 保持一致）
+// 可用工具（必须与后端 PREDEFINED_TOOLS 保持一致）
 const AVAILABLE_TOOLS = [
   { value: 'knowledge_search', label: '知识库检索' },
-  { value: 'web_search', label: '网络搜索' },
   { value: 'calculator', label: '计算器' },
-  { value: 'code_interpreter', label: '代码解释器' },
-  { value: 'database_query', label: '数据库查询' },
+  { value: 'datetime', label: '当前时间' },
+  { value: 'code_executor', label: '代码执行' },
+  { value: 'browser', label: '浏览器' },
+  { value: 'file', label: '文件操作' },
 ];
 
 const AgentManagementPanel: React.FC<AgentManagementPanelProps> = ({

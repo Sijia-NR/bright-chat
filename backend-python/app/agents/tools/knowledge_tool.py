@@ -7,7 +7,7 @@ Allows Agent to search and retrieve information from knowledge bases
 """
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,17 @@ def format_search_result(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def create_error_response(error: Exception, query: str) -> Dict[str, Any]:
+def create_error_response(error: Union[Exception, str], query: str) -> Dict[str, Any]:
     """创建错误响应"""
+    error_msg = str(error) if isinstance(error, Exception) else error
     return {
-        "error": str(error),
+        "error": error_msg,
         "query": query,
         "total_results": 0,
-        "results": []
+        "results": [],
+        "context": "",
+        "sources": [],
+        "retrieval_time": datetime.now().isoformat()
     }
 
 
@@ -81,6 +85,14 @@ async def knowledge_search_tool(
         - results: 详细结果列表
         - retrieval_time: 检索时间
     """
+    # ✅ 检查用户是否选择了知识库
+    if not knowledge_base_ids or len(knowledge_base_ids) == 0:
+        logger.warning(f"⚠️ [知识库检索] 用户未选择知识库，拒绝搜索请求")
+        return create_error_response(
+            error="用户未选择知识库，无法进行检索。请先选择一个或多个知识库。",
+            query=query
+        )
+
     try:
         from ...rag.retriever import RAGRetriever
         from ...rag.config import get_rag_config
