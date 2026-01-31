@@ -62,7 +62,7 @@ export const AgentExecutionDetails: React.FC<AgentExecutionDetailsProps> = ({
 
                   {/* 步骤内容 */}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-lg p-3">
+                    <div className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-lg p-3 break-words">
                       {step.reasoning}
                     </div>
 

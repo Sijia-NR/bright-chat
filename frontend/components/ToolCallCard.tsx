@@ -107,7 +107,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({
                 <Download className="w-3.5 h-3.5" />
                 <span>输入参数</span>
               </div>
-              <pre className="text-xs bg-white rounded-lg p-3 overflow-x-auto border border-gray-200 font-mono leading-relaxed">
+              <pre className="text-xs bg-white rounded-lg p-3 overflow-x-auto border border-gray-200 font-mono leading-relaxed break-all whitespace-pre-wrap">
                 {JSON.stringify(toolCall.parameters, null, 2)}
               </pre>
             </div>
@@ -119,7 +119,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({
               <Upload className="w-3.5 h-3.5" />
               <span>执行结果</span>
             </div>
-            <pre className="text-xs bg-white rounded-lg p-3 overflow-x-auto max-h-60 overflow-y-auto border border-gray-200 font-mono leading-relaxed">
+            <pre className="text-xs bg-white rounded-lg p-3 overflow-x-auto max-h-60 overflow-y-auto border border-gray-200 font-mono leading-relaxed break-all whitespace-pre-wrap">
               {formatResult(toolCall.result)}
             </pre>
           </div>
