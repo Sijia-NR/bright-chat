@@ -1,0 +1,43 @@
+# BrightChat 知识库和数字员工功能 - 依赖包
+# Knowledge Base and Digital Agent Feature Dependencies
+#
+# 安装方法 / Installation:
+#   pip install -r requirements-rag.txt
+#
+# 或者合并到现有依赖 / Or merge with existing requirements:
+#   cat requirements-rag.txt >> requirements.txt
+
+# ==================== 核心框架 ====================
+langchain==0.3.10
+langchain-community==0.3.10
+langgraph==0.2.55
+
+# ==================== 向量数据库 ====================
+chromadb==0.5.23
+
+# ==================== Embedding 模型 ====================
+sentence-transformers==3.3.1
+transformers==4.46.2            # Hugging Face Transformers
+torch==2.5.1                    # PyTorch (sentence-transformers 依赖)
+
+# ==================== 文档处理 ====================
+pypdf==5.1.0                    # PDF 解析
+docx2txt==0.9                   # Word 文档解析 (Docx2txtLoader 需要)
+python-docx==1.1.2              # Word 文档解析 (备用)
+python-pptx==1.0.2              # PowerPoint 解析
+openpyxl==3.1.5                 # Excel 解析
+pillow==11.1.0                  # 图像处理（用于OCR等）
+# markdown==3.7                 # Markdown 解析 (系统已安装)
+beautifulsoup4==4.12.3          # HTML 解析
+lxml==5.3.0                     # XML/HTML 解析器
+html2text==2024.2.26            # HTML 转纯文本
+
+# ==================== 工具和实用程序 ====================
+tiktoken==0.8.0                 # Token 计数
+# rank-bm==0.2.2               # BM25 稀疏检索（不可用，已移除）
+
+# ==================== 其他依赖 ====================
+numpy==2.2.1                    # 数值计算
+scipy==1.14.1                   # 科学计算
+
+# 注意: httpx, aiofiles 等已在 requirements.txt 中定义

@@ -1,0 +1,122 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "新对话" [ref=e6] [cursor=pointer]:
+      - img [ref=e7]
+      - generic [ref=e8]: 新对话
+    - button "数字员工" [active] [ref=e10] [cursor=pointer]:
+      - generic [ref=e12]: 数字员工
+      - img [ref=e13]
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - button "个人知识库" [ref=e17] [cursor=pointer]:
+          - generic [ref=e18]: 个人知识库
+          - img [ref=e19]
+        - button "管理知识库" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+      - button "新建分组" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+        - generic [ref=e28]: 新建分组
+    - generic [ref=e29]:
+      - button "会话轨迹 ▼" [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]:
+          - img [ref=e32]
+          - text: 会话轨迹
+        - generic [ref=e35]: ▼
+      - generic [ref=e36] [cursor=pointer]:
+        - generic [ref=e37]:
+          - img [ref=e38]
+          - generic [ref=e40]: 切换测试Agent 对话
+        - button [ref=e41]:
+          - img [ref=e42]
+      - generic [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]:
+          - img [ref=e47]
+          - generic [ref=e49]: 测试Agent 对话
+        - button [ref=e50]:
+          - img [ref=e51]
+      - generic [ref=e54] [cursor=pointer]:
+        - generic [ref=e55]:
+          - img [ref=e56]
+          - generic [ref=e58]: 测试Agent 对话
+        - button [ref=e59]:
+          - img [ref=e60]
+      - generic [ref=e63] [cursor=pointer]:
+        - generic [ref=e64]:
+          - img [ref=e65]
+          - generic [ref=e67]: 没事吧
+        - button [ref=e68]:
+          - img [ref=e69]
+      - generic [ref=e72] [cursor=pointer]:
+        - generic [ref=e73]:
+          - img [ref=e74]
+          - generic [ref=e76]: 你好
+        - button [ref=e77]:
+          - img [ref=e78]
+    - button "收藏的消息" [ref=e82] [cursor=pointer]:
+      - img [ref=e83]
+      - generic [ref=e85]: 收藏的消息
+    - generic [ref=e86]:
+      - generic [ref=e87]:
+        - generic [ref=e88]: A
+        - generic [ref=e89]:
+          - generic [ref=e90]: admin
+          - generic [ref=e91]: admin
+        - button "系统管理" [ref=e92] [cursor=pointer]:
+          - img [ref=e93]
+      - button "退出登录" [ref=e96] [cursor=pointer]:
+        - img [ref=e97]
+        - generic [ref=e100]: 退出登录
+  - main [ref=e101]:
+    - generic [ref=e102]:
+      - button "GLM-4 Flash" [ref=e104] [cursor=pointer]:
+        - generic [ref=e105]: GLM-4 Flash
+        - img [ref=e106]
+      - generic [ref=e108]:
+        - button [ref=e109] [cursor=pointer]:
+          - img [ref=e110]
+        - button [ref=e113] [cursor=pointer]:
+          - img [ref=e114]
+        - button [ref=e120] [cursor=pointer]:
+          - img [ref=e121]
+        - button [ref=e126] [cursor=pointer]:
+          - img [ref=e127]
+    - generic [ref=e133]:
+      - generic [ref=e135]: AI
+      - heading "AI工作台" [level=1] [ref=e136]
+      - paragraph [ref=e137]: 智能协作 · 高效办公
+    - generic [ref=e138]:
+      - generic [ref=e139]:
+        - textbox "向AI助手提问，开始工作..." [ref=e140]
+        - generic [ref=e141]:
+          - generic [ref=e142]:
+            - button "深度思考" [ref=e143] [cursor=pointer]:
+              - img [ref=e144]
+              - generic [ref=e152]: 深度思考
+            - button "深度研究" [ref=e153] [cursor=pointer]:
+              - img [ref=e154]
+              - generic [ref=e157]: 深度研究
+            - button "代码辅助" [ref=e158] [cursor=pointer]:
+              - img [ref=e159]
+              - generic [ref=e162]: 代码辅助
+            - button "图像理解" [ref=e163] [cursor=pointer]:
+              - img [ref=e164]
+              - generic [ref=e168]: 图像理解
+          - button [disabled] [ref=e169]:
+            - img [ref=e170]
+      - generic [ref=e173]:
+        - button "语音对话" [ref=e174] [cursor=pointer]:
+          - img [ref=e176]
+          - generic [ref=e179]: 语音对话
+        - button "生成PPT" [ref=e180] [cursor=pointer]:
+          - img [ref=e182]
+          - generic [ref=e185]: 生成PPT
+        - button "创作视频" [ref=e186] [cursor=pointer]:
+          - img [ref=e188]
+          - generic [ref=e191]: 创作视频
+        - button "阅读文档" [ref=e192] [cursor=pointer]:
+          - img [ref=e194]
+          - generic [ref=e197]: 阅读文档
+```

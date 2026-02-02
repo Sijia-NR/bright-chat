@@ -1,0 +1,17 @@
+{
+  "name": "bright-chat-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for Bright-Chat application",
+  "scripts": {
+    "test": "node node_modules/@playwright/test/cli.js test",
+    "test:headed": "node node_modules/@playwright/test/cli.js test --headed",
+    "test:debug": "node node_modules/@playwright/test/cli.js test --debug",
+    "test:ui": "node node_modules/@playwright/test/cli.js test --ui",
+    "test:report": "node node_modules/@playwright/test/cli.js show-report",
+    "test:install": "node node_modules/@playwright/test/cli.js install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@types/node": "^20.0.0"
+  }
+}

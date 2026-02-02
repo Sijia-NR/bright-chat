@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt .
+COPY pyproject.toml .
+
+# 安装 Python 依赖（这层会被缓存）
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码（只有代码变更时才重新构建）
+COPY . .
+
+# 创建日志目录
+RUN mkdir -p logs
+
+# 设置环境变量
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# 暴露端口
+EXPOSE 18080
+
+# 运行应用
+CMD ["python", "minimal_api.py"]

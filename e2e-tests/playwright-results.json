@@ -1,0 +1,308 @@
+{
+  "config": {
+    "configFile": "/data1/allresearchProject/Bright-Chat/e2e-tests/playwright.config.ts",
+    "rootDir": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests",
+    "forbidOnly": false,
+    "fullyParallel": true,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "html",
+        {
+          "outputFolder": "playwright-report"
+        }
+      ],
+      [
+        "junit",
+        {
+          "outputFile": "playwright-results.xml"
+        }
+      ],
+      [
+        "json",
+        {
+          "outputFile": "playwright-results.json"
+        }
+      ],
+      [
+        "list",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "agent-smart-e2e.spec.ts",
+      "file": "agent-smart-e2e.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "数字员工完整流程 E2E 测试",
+          "file": "agent-smart-e2e.spec.ts",
+          "line": 8,
+          "column": 6,
+          "specs": [
+            {
+              "title": "完整流程：创建→上线→侧边栏→对话",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 11275,
+                      "error": {
+                        "message": "Error: page.textContent: selector: expected string, got undefined",
+                        "stack": "Error: page.textContent: selector: expected string, got undefined\n    at /data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts:137:36",
+                        "location": {
+                          "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                          "column": 36,
+                          "line": 137
+                        },
+                        "snippet": "  135 |\n  136 |     // 检查页面内容\n> 137 |     const pageContent = await page.textContent();\n      |                                    ^\n  138 |     const hasAgentName = pageContent.includes(agentData.display_name);\n  139 |\n  140 |     console.log(`页面中是否包含 Agent 名称: ${hasAgentName}`);"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                            "column": 36,
+                            "line": 137
+                          },
+                          "message": "Error: page.textContent: selector: expected string, got undefined\n\n  135 |\n  136 |     // 检查页面内容\n> 137 |     const pageContent = await page.textContent();\n      |                                    ^\n  138 |     const hasAgentName = pageContent.includes(agentData.display_name);\n  139 |\n  140 |     console.log(`页面中是否包含 Agent 名称: ${hasAgentName}`);\n    at /data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts:137:36"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "✅ API token 获取成功\n"
+                        },
+                        {
+                          "text": "当前 URL: http://localhost:3000/\n"
+                        },
+                        {
+                          "text": "📍 执行登录\n"
+                        },
+                        {
+                          "text": "✅ 登录成功\n"
+                        },
+                        {
+                          "text": "📍 步骤 2: 创建测试 Agent\n"
+                        },
+                        {
+                          "text": "✅ Agent 创建成功: 3efe22a7-c6f8-4aa9-ac38-20e72f43a3bd\n"
+                        },
+                        {
+                          "text": "   名称: 流程测试Agent 259108\n"
+                        },
+                        {
+                          "text": "   状态: 上线\n"
+                        },
+                        {
+                          "text": "📍 步骤 3: 上线 Agent\n"
+                        },
+                        {
+                          "text": "✅ Agent 上线成功\n"
+                        },
+                        {
+                          "text": "📍 步骤 4: 验证侧边栏显示\n"
+                        },
+                        {
+                          "text": "✅ 清理测试 Agent 完成\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-28T08:17:31.831Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-完整流程：创建→上线→侧边栏→对话-chromium/test-failed-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-完整流程：创建→上线→侧边栏→对话-chromium/video.webm"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-完整流程：创建→上线→侧边栏→对话-chromium/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                        "column": 36,
+                        "line": 137
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "0a57f5f51c14ca4eed0c-c572da01b76c72af6aae",
+              "file": "agent-smart-e2e.spec.ts",
+              "line": 73,
+              "column": 7
+            },
+            {
+              "title": "验证侧边栏 Agent 列表刷新",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 12057,
+                      "error": {
+                        "message": "Error: page.textContent: selector: expected string, got undefined",
+                        "stack": "Error: page.textContent: selector: expected string, got undefined\n    at /data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts:262:37",
+                        "location": {
+                          "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                          "column": 37,
+                          "line": 262
+                        },
+                        "snippet": "  260 |\n  261 |         // 检查是否有 Agent 列表\n> 262 |         const pageText = await page.textContent();\n      |                                     ^\n  263 |         if (pageText.includes('Agent') || pageText.includes('助手') || pageText.includes('员工')) {\n  264 |           // 粗略统计\n  265 |           const match = pageText.match(/Agent|助手|员工/g);"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                            "column": 37,
+                            "line": 262
+                          },
+                          "message": "Error: page.textContent: selector: expected string, got undefined\n\n  260 |\n  261 |         // 检查是否有 Agent 列表\n> 262 |         const pageText = await page.textContent();\n      |                                     ^\n  263 |         if (pageText.includes('Agent') || pageText.includes('助手') || pageText.includes('员工')) {\n  264 |           // 粗略统计\n  265 |           const match = pageText.match(/Agent|助手|员工/g);\n    at /data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts:262:37"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "✅ API token 获取成功\n"
+                        },
+                        {
+                          "text": "📍 验证侧边栏刷新\n"
+                        },
+                        {
+                          "text": "当前 URL: http://localhost:3000/\n"
+                        },
+                        {
+                          "text": "📍 执行登录\n"
+                        },
+                        {
+                          "text": "✅ 登录成功\n"
+                        },
+                        {
+                          "text": "API 返回 3 个上线的 Agent\n"
+                        },
+                        {
+                          "text": "找到 1 个 \"button:has-text(\"数字员工\")\" 元素\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-28T08:17:45.641Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-验证侧边栏-Agent-列表刷新-chromium/test-failed-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-验证侧边栏-Agent-列表刷新-chromium/video.webm"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/data1/allresearchProject/Bright-Chat/e2e-tests/test-results/agent-smart-e2e-数字员工完整流程-E2E-测试-验证侧边栏-Agent-列表刷新-chromium/error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/data1/allresearchProject/Bright-Chat/e2e-tests/tests/agent-smart-e2e.spec.ts",
+                        "column": 37,
+                        "line": 262
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "0a57f5f51c14ca4eed0c-8b062d6bc05ce3d0452c",
+              "file": "agent-smart-e2e.spec.ts",
+              "line": 220,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-01-28T08:17:29.750Z",
+    "duration": 28670.289,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 2,
+    "flaky": 0
+  }
+}
