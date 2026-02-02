@@ -1,12 +1,12 @@
-# 智能体接口文档 v0.1
+# 智能体接口文档
 
 **Bright-Chat Agent API Documentation**
 
-> 基于架构审查报告 (2026-01-29) 生成
-> 版本: 0.1.0
+> 版本: 1.0.0
 > 基础路径: `/api/v1/agents`
 > 协议: HTTP/HTTPS
 > 数据格式: JSON
+> 最后更新: 2026-02-02
 
 ---
 
@@ -24,10 +24,12 @@
 - [Agent 交互](#agent-交互)
   - [Agent 聊天](#6-agent-聊天)
   - [获取执行历史](#7-获取执行历史)
+  - [获取消息执行记录](#8-获取消息执行记录)
 - [工具与服务](#工具与服务)
-  - [获取可用工具](#8-获取可用工具)
-  - [健康检查](#9-健康检查)
+  - [获取可用工具](#9-获取可用工具)
+  - [健康检查](#10-健康检查)
 - [数据模型](#数据模型)
+- [Agent 工具详细说明](#agent-工具详细说明)
 - [错误码](#错误码)
 
 ---
@@ -110,8 +112,9 @@ Content-Type: application/json
 | 5 | 删除 Agent | DELETE | `/agents/{id}` | ✅ | Admin |
 | 6 | Agent 聊天 | POST | `/agents/{id}/chat` | ✅ | All |
 | 7 | 获取执行历史 | GET | `/agents/{id}/executions` | ✅ | All |
-| 8 | 获取可用工具 | GET | `/agents/tools` | ❌ | Public |
-| 9 | 健康检查 | GET | `/agents/service-health` | ❌ | Public |
+| 8 | 获取消息执行记录 | GET | `/agents/messages/{message_id}/execution` | ✅ | All |
+| 9 | 获取可用工具 | GET | `/agents/tools` | ❌ | Public |
+| 10 | 健康检查 | GET | `/agents/service-health` | ❌ | Public |
 
 ---
 
@@ -159,9 +162,9 @@ Content-Type: application/json
 - `knowledge_search` - 知识库检索
 - `calculator` - 计算器
 - `datetime` - 当前时间
-- `code_executor` - 代码执行
-- `browser` - 浏览器
-- `file` - 文件操作
+- `code_executor` - 代码执行（沙箱隔离）
+- `browser` - 浏览器（无头浏览器）
+- `file` - 文件操作（路径受限）
 
 **请求示例**：
 
@@ -183,8 +186,7 @@ curl -X POST http://localhost:18080/api/v1/agents/ \
       "timeout": 300
     },
     "llm_model_id": "model-123",
-    "enable_knowledge": true,
-    "order": 1
+    "enable_knowledge": true
   }'
 ```
 
@@ -211,8 +213,8 @@ curl -X POST http://localhost:18080/api/v1/agents/ \
   "order": 1,
   "is_active": true,
   "created_by": "user-001",
-  "created_at": "2026-01-29T12:00:00",
-  "updated_at": "2026-01-29T12:00:00"
+  "created_at": "2026-02-02T12:00:00",
+  "updated_at": "2026-02-02T12:00:00"
 }
 ```
 
@@ -295,8 +297,8 @@ curl "http://localhost:18080/api/v1/agents/?page=1&limit=10&agent_type=tool&sear
       "order": 1,
       "is_active": true,
       "created_by": "user-001",
-      "created_at": "2026-01-29T12:00:00",
-      "updated_at": "2026-01-29T12:00:00"
+      "created_at": "2026-02-02T12:00:00",
+      "updated_at": "2026-02-02T12:00:00"
     }
   ],
   "total": 42,
@@ -360,8 +362,8 @@ curl http://localhost:18080/api/v1/agents/agent-001 \
   "order": 1,
   "is_active": true,
   "created_by": "user-001",
-  "created_at": "2026-01-29T12:00:00",
-  "updated_at": "2026-01-29T12:00:00"
+  "created_at": "2026-02-02T12:00:00",
+  "updated_at": "2026-02-02T12:00:00"
 }
 ```
 
@@ -441,8 +443,8 @@ curl -X PUT http://localhost:18080/api/v1/agents/agent-001 \
   "order": 10,
   "is_active": true,
   "created_by": "user-001",
-  "created_at": "2026-01-29T12:00:00",
-  "updated_at": "2026-01-29T12:30:00"
+  "created_at": "2026-02-02T12:00:00",
+  "updated_at": "2026-02-02T12:30:00"
 }
 ```
 
@@ -538,16 +540,16 @@ curl -X POST http://localhost:18080/api/v1/agents/agent-001/chat \
 
 ```javascript
 // 1. 开始事件
-data: {"type":"start","execution_id":"exec-456","agent_name":"数据分析师","query":"帮我分析一下最近一周的销售数据趋势","timestamp":"2026-01-29T12:00:00"}
+data: {"type":"start","execution_id":"exec-456","agent_name":"数据分析师","query":"帮我分析一下最近一周的销售数据趋势","timestamp":"2026-02-02T12:00:00"}
 
-// 2. 步骤事件（思考）
-data: {"type":"step","node":"think","step":1,"state":{"input":"帮我分析一下最近一周的销售数据趋势"},"timestamp":"2026-01-29T12:00:01"}
+// 2. 推理事件
+data: {"type":"reasoning","step":1,"node":"think","reasoning":"我需要搜索知识库来获取销售数据...","tool_decision":{"tool":"knowledge_search","parameters":{"query":"销售数据"}},"timestamp":"2026-02-02T12:00:01"}
 
 // 3. 工具调用事件
-data: {"type":"tool_call","tool":"knowledge_search","parameters":{"query":"销售数据","top_k":5},"result":"找到 5 条相关记录...","timestamp":"2026-01-29T12:00:03"}
+data: {"type":"tool_call","tool":"knowledge_search","parameters":{"query":"销售数据","top_k":5},"result":"找到 5 条相关记录...","timestamp":"2026-02-02T12:00:03"}
 
 // 4. 完成事件
-data: {"type":"complete","output":"根据最近一周的销售数据分析，总体趋势呈上升态势...","steps":3,"duration":5.2,"timestamp":"2026-01-29T12:00:06"}
+data: {"type":"complete","output":"根据最近一周的销售数据分析，总体趋势呈上升态势...","steps":3,"duration":5.2,"timestamp":"2026-02-02T12:00:06"}
 
 // 5. 结束标记
 data: [DONE]
@@ -558,7 +560,7 @@ data: [DONE]
 | 事件类型 | 说明 | 字段 |
 |---------|------|------|
 | `start` | 开始执行 | `execution_id`, `agent_name`, `query`, `timestamp` |
-| `step` | 执行步骤 | `node`, `step`, `state`, `timestamp` |
+| `reasoning` | 推理过程 | `step`, `node`, `reasoning`, `tool_decision`, `timestamp` |
 | `tool_call` | 工具调用 | `tool`, `parameters`, `result`, `timestamp` |
 | `complete` | 执行完成 | `output`, `steps`, `duration`, `timestamp` |
 | `error` | 执行错误 | `error`, `timestamp` |
@@ -599,8 +601,8 @@ while (true) {
         case 'start':
           console.log('开始执行:', event.execution_id);
           break;
-        case 'step':
-          console.log('步骤:', event.node, event.step);
+        case 'reasoning':
+          console.log('推理:', event.reasoning);
           break;
         case 'tool_call':
           console.log('工具调用:', event.tool, event.parameters);
@@ -665,26 +667,29 @@ curl "http://localhost:18080/api/v1/agents/agent-001/executions?page=1&limit=10"
       "agent_id": "agent-001",
       "user_id": "user-123",
       "session_id": "session-456",
+      "message_id": "msg-789",
       "input_prompt": "帮我分析销售数据",
       "status": "completed",
       "steps": 3,
       "result": "根据分析，销售数据呈上升趋势...",
       "error_message": null,
-      "started_at": "2026-01-29T12:00:00",
-      "completed_at": "2026-01-29T12:00:05"
-    },
-    {
-      "id": "exec-002",
-      "agent_id": "agent-001",
-      "user_id": "user-123",
-      "session_id": "session-456",
-      "input_prompt": "计算 123 + 456",
-      "status": "completed",
-      "steps": 1,
-      "result": "579",
-      "error_message": null,
-      "started_at": "2026-01-29T11:55:00",
-      "completed_at": "2026-01-29T11:55:02"
+      "execution_log": [
+        {
+          "step": 1,
+          "tool": "knowledge_search",
+          "parameters": {"query": "销售数据"},
+          "result": "找到 5 条相关记录..."
+        }
+      ],
+      "reasoning_steps": [
+        {
+          "step": 1,
+          "node": "think",
+          "reasoning": "需要搜索知识库获取销售数据"
+        }
+      ],
+      "started_at": "2026-02-02T12:00:00",
+      "completed_at": "2026-02-02T12:00:05"
     }
   ],
   "total": 42,
@@ -708,9 +713,73 @@ curl "http://localhost:18080/api/v1/agents/agent-001/executions?page=1&limit=10"
 
 ---
 
+### 8. 获取消息执行记录
+
+获取指定消息关联的 Agent 执行记录。
+
+**接口信息**：
+
+- **方法**: `GET`
+- **路径**: `/api/v1/agents/messages/{message_id}/execution`
+- **认证**: 需要
+- **权限**: 所有用户
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `message_id` | string | ✅ | 消息 ID |
+
+**请求示例**：
+
+```bash
+curl http://localhost:18080/api/v1/agents/messages/msg-789/execution \
+  -H "Authorization: Bearer <token>"
+```
+
+**成功响应** (200):
+
+```json
+{
+  "id": "exec-001",
+  "agent_id": "agent-001",
+  "user_id": "user-123",
+  "session_id": "session-456",
+  "message_id": "msg-789",
+  "input_prompt": "帮我分析销售数据",
+  "status": "completed",
+  "steps": 3,
+  "result": "根据分析，销售数据呈上升趋势...",
+  "error_message": null,
+  "execution_log": [
+    {
+      "step": 1,
+      "tool": "knowledge_search",
+      "parameters": {"query": "销售数据"},
+      "result": "找到 5 条相关记录..."
+    }
+  ],
+  "reasoning_steps": [
+    {
+      "step": 1,
+      "node": "think",
+      "reasoning": "需要搜索知识库获取销售数据"
+    }
+  ],
+  "started_at": "2026-02-02T12:00:00",
+  "completed_at": "2026-02-02T12:00:05"
+}
+```
+
+**错误响应**：
+
+- `404` - 消息不存在或无关联执行记录
+
+---
+
 ## 工具与服务
 
-### 8. 获取可用工具
+### 9. 获取可用工具
 
 获取所有可用的 Agent 工具列表。
 
@@ -785,7 +854,7 @@ curl http://localhost:18080/api/v1/agents/tools
     {
       "name": "file",
       "display_name": "文件操作",
-      "description": "读写文件、列出目录",
+      "description": "读写文件、列出目录（路径受限）",
       "category": "system",
       "parameters": {
         "action": {"type": "string", "description": "操作类型：read/write/list/exists/delete"},
@@ -809,7 +878,7 @@ curl http://localhost:18080/api/v1/agents/tools
 
 ---
 
-### 9. 健康检查
+### 10. 健康检查
 
 检查 Agent 服务的健康状态。
 
@@ -832,7 +901,7 @@ curl http://localhost:18080/api/v1/agents/service-health
 {
   "status": "healthy",
   "tools_registered": 6,
-  "timestamp": "2026-01-29T12:00:00.123456"
+  "timestamp": "2026-02-02T12:00:00.123456"
 }
 ```
 
@@ -842,7 +911,7 @@ curl http://localhost:18080/api/v1/agents/service-health
 {
   "status": "unhealthy",
   "error": "Agent service initialization failed",
-  "timestamp": "2026-01-29T12:00:00.123456"
+  "timestamp": "2026-02-02T12:00:00.123456"
 }
 ```
 
@@ -886,15 +955,321 @@ curl http://localhost:18080/api/v1/agents/service-health
   agent_id: string;        // Agent ID
   user_id: string;         // 用户 ID
   session_id: string;      // 会话 ID（可选）
+  message_id: string;      // 关联的消息 ID
   input_prompt: string;    // 用户输入
   status: string;          // 状态: "running" | "completed" | "failed"
   steps: number;           // 执行步数
   result: string;          // 执行结果
   error_message: string;   // 错误信息
+  execution_log: Array<{   // 工具调用日志
+    step: number;
+    tool: string;
+    parameters: object;
+    result: string;
+  }>;
+  reasoning_steps: Array<{ // 推理步骤
+    step: number;
+    node: string;
+    reasoning: string;
+    tool_decision?: object;
+  }>;
   started_at: string;      // 开始时间（ISO 8601）
   completed_at: string;    // 完成时间（ISO 8601，可选）
 }
 ```
+
+---
+
+## Agent 工具详细说明
+
+### 1. 知识库检索 (knowledge_search)
+
+在指定的知识库中搜索信息，使用向量相似度搜索。
+
+**参数**：
+- `query` (string, 必填): 搜索查询
+- `knowledge_base_ids` (array, 必填): 知识库 ID 列表
+- `top_k` (integer, 可选): 返回结果数量，默认 5
+- `user_id` (string, 可选): 用户 ID（用于权限验证）
+
+**返回值**：
+```json
+{
+  "query": "搜索关键词",
+  "total_results": 5,
+  "context": "格式化的上下文文本",
+  "sources": ["文件1.pdf", "文档2.docx"],
+  "results": [
+    {
+      "content": "内容片段",
+      "filename": "文件名",
+      "similarity": 0.95,
+      "chunk_index": 0
+    }
+  ]
+}
+```
+
+**安全限制**：
+- 必须选择至少一个知识库
+- 自动验证用户权限
+- 限制返回结果数量
+
+---
+
+### 2. 计算器 (calculator)
+
+执行数学计算，支持基本运算。
+
+**参数**：
+- `expression` (string, 必填): 数学表达式
+
+**支持的操作**：
+- 基本运算：`+`, `-`, `*`, `/`
+- 括号：`()`
+- 小数点：`.`
+
+**返回值**：
+- 成功：计算结果（number）
+- 失败：错误信息字符串
+
+**示例**：
+```javascript
+// 简单计算
+"2 + 3 * 4"  // 返回 14
+
+// 复杂表达式
+"(100 + 50) / 2"  // 返回 75
+
+// 错误处理
+"100 / 0"  // 返回 "错误：除数不能为零"
+```
+
+**安全限制**：
+- 使用正则表达式验证表达式合法性
+- 限制只能使用特定的数学运算字符
+- 使用受限的 eval 环境
+
+---
+
+### 3. 当前时间 (datetime)
+
+获取当前日期和时间信息。
+
+**参数**：
+- 无
+
+**返回值**：
+```json
+{
+  "datetime": "2026-02-02T10:30:45",
+  "date": "2026-02-02",
+  "time": "10:30:45",
+  "year": 2026,
+  "month": 2,
+  "day": 2,
+  "hour": 10,
+  "minute": 30,
+  "second": 45,
+  "weekday": 1,
+  "weekday_name": "Tuesday",
+  "timezone": "Asia/Shanghai"
+}
+```
+
+**安全限制**：
+- 无权限风险
+- 只读取系统时间
+
+---
+
+### 4. 代码执行 (code_executor)
+
+在沙箱环境中安全执行 Python 代码。
+
+**参数**：
+- `code` (string, 必填): 要执行的 Python 代码
+- `timeout` (integer, 可选): 超时时间（秒），默认 30
+
+**允许的模块**：
+- `math`, `datetime`, `json`, `re`, `collections`, `itertools`, `random`, `statistics`
+
+**允许的内置函数**：
+- `print`, `len`, `range`, `str`, `int`, `float`, `bool`, `list`, `dict`, `tuple`, `set`, `sum`, `max`, `min`, `abs`, `round`, `sorted`, `enumerate`, `zip`, `map`, `filter`, `any`, `all`, `isinstance`, `type`
+
+**禁止的操作**：
+- 文件系统操作（`import os`, `open` 等）
+- 进程操作（`import subprocess`）
+- 危险函数（`eval`, `exec globals`, `locals` 等）
+- 网络操作
+
+**返回值**：
+```json
+{
+  "success": true,
+  "output": "执行结果",
+  "error": null,
+  "execution_time": 1.23
+}
+```
+
+**示例**：
+```python
+# 简单计算
+x = 10 + 5
+print(x)  # 输出: 15
+
+# 数学计算
+import math
+result = math.sqrt(100)
+print(f"平方根: {result}")  # 输出: 平方根: 10.0
+```
+
+**安全限制**：
+- 沙箱隔离环境
+- 严格的安全检查
+- 超时保护
+- 限制危险模块和函数
+
+---
+
+### 5. 浏览器 (browser)
+
+服务端无头浏览器，基于 Playwright，支持网页操作。
+
+**参数**：
+- `action` (string, 必填): 操作类型
+  - `navigate`: 导航到 URL
+  - `screenshot`: 截图
+  - `click`: 点击元素
+  - `fill`: 填写表单
+  - `scrape`: 抓取页面文本
+  - `search`: 搜索引擎搜索（百度）
+- `url` (string, 可选): 目标 URL
+- `selector` (string, 可选): CSS 选择器
+- `text` (string, 可选): 文本内容（用于填写或搜索）
+- `wait_time` (integer, 可选): 等待时间（毫秒），默认 3000
+
+**返回值**：
+```json
+// 导航操作
+{
+  "success": true,
+  "data": {
+    "url": "https://example.com",
+    "title": "页面标题"
+  }
+}
+
+// 搜索操作
+{
+  "success": true,
+  "data": {
+    "query": "搜索关键词",
+    "results": [
+      {
+        "rank": 1,
+        "title": "结果标题",
+        "url": "https://example.com",
+        "snippet": "摘要内容"
+      }
+    ],
+    "count": 10,
+    "engine": "baidu"
+  }
+}
+```
+
+**示例**：
+```javascript
+// 导航网页
+{action: "navigate", url: "https://example.com"}
+
+// 抓取内容
+{action: "scrape", url: "https://example.com"}
+
+// 搜索
+{action: "search", text: "Python编程"}
+
+// 点击元素
+{action: "click", selector: "button#submit"}
+```
+
+**安全限制**：
+- 只使用无头模式，不显示界面
+- 支持并发访问，有锁保护
+- 限制内容抓取长度（10,000 字符）
+- 超时控制（30 秒）
+
+---
+
+### 6. 文件操作 (file)
+
+安全的文件读写操作，支持路径访问限制。
+
+**参数**：
+- `action` (string, 必填): 操作类型
+  - `read`: 读取文件
+  - `write`: 写入文件
+  - `list`: 列出目录
+  - `exists`: 检查文件是否存在
+  - `delete`: 删除文件
+- `path` (string, 必填): 文件/目录路径
+- `content` (string, 可选): 文件内容（用于 write）
+- `allowed_dirs` (list, 可选): 允许访问的目录列表
+
+**默认允许目录**：
+- `/tmp`
+- `/uploads`
+- `/agent_workspace`
+
+**返回值**：
+```json
+// 读取文件
+{
+  "success": true,
+  "data": {
+    "path": "/path/to/file.txt",
+    "content": "文件内容",
+    "size": 1024
+  }
+}
+
+// 列出目录
+{
+  "success": true,
+  "data": {
+    "path": "/path/to/directory",
+    "items": [
+      {
+        "name": "file.txt",
+        "path": "/path/to/directory/file.txt",
+        "type": "file",
+        "size": 1024
+      }
+    ],
+    "count": 5
+  }
+}
+```
+
+**示例**：
+```javascript
+// 读取文件
+{action: "read", path: "/tmp/test.txt"}
+
+// 写入文件
+{action: "write", path: "/tmp/test.txt", content: "Hello, World"}
+
+// 列出目录
+{action: "list", path: "/tmp"}
+```
+
+**安全限制**：
+- 默认允许目录列表控制
+- 相对路径自动转换为工作目录路径
+- 严格路径检查，防止目录遍历攻击
+- 只能访问白名单目录
 
 ---
 
@@ -945,16 +1320,22 @@ const newAgent = await agentService.createAgent({
   name: 'my-agent',
   display_name: '我的 Agent',
   description: '这是一个测试 Agent',
-  type: 'tool',
+  agent_type: 'tool',
   tools: ['calculator', 'datetime']
 });
 
-// 3. Agent 聊天
+// 3. Agent 聊天（流式）
 for await (const event of await agentService.agentChat(newAgent.id, {
   query: '帮我计算 123 + 456',
   session_id: 'session-123'
 })) {
   switch (event.type) {
+    case 'reasoning':
+      console.log('推理:', event.reasoning);
+      break;
+    case 'tool_call':
+      console.log('工具调用:', event.tool, event.parameters);
+      break;
     case 'complete':
       console.log('最终答案:', event.output);
       break;
@@ -969,23 +1350,50 @@ const executions = await agentService.getAgentExecutions(newAgent.id, 10);
 console.log('执行历史:', executions);
 ```
 
-### B. Swagger 文档
+### B. Agent 工作流程
+
+Agent 使用 LangGraph 实现状态机，工作流程如下：
+
+```
+1. Plan 节点（规划）
+   ├─ 使用 TaskPlanner 将复杂任务分解为子任务
+   ├─ 生成执行计划（execution_plan）
+   └─ 设置当前子任务
+
+2. Think 节点（思考）
+   ├─ 使用 LLMReasoner 进行推理
+   ├─ 决定是否使用工具及使用哪个工具
+   └─ 生成 reasoning 链和 tool_decision
+
+3. Act 节点（行动）
+   ├─ 执行 LLM 决定的工具
+   ├─ 记录工具调用结果
+   └─ 支持参数增强
+
+4. Observe 节点（观察）
+   ├─ 判断是否继续循环
+   ├─ 生成最终答案
+   └─ 支持子任务切换
+```
+
+### C. Swagger 文档
 
 交互式 API 文档：`http://localhost:18080/docs`
 
-### C. 版本历史
+### D. 版本历史
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| 0.1.0 | 2026-01-29 | 初始版本，包含基础接口 |
+| 0.1.0 | 2026-01-29 | 初始版本 |
+| 1.0.0 | 2026-02-02 | 正式版本，新增工具和接口 |
 
 ---
 
 ## 联系方式
 
 - **项目**: Bright-Chat
-- **文档版本**: 0.1.0
-- **最后更新**: 2026-01-29
+- **文档版本**: 1.0.0
+- **最后更新**: 2026-02-02
 - **基础路径**: `/api/v1/agents`
 - **服务器端口**: `18080`（本地开发）
 
@@ -993,9 +1401,13 @@ console.log('执行历史:', executions);
 
 **注意事项**：
 
-1. 所有时间字段使用 **ISO 8601** 格式（如：`2026-01-29T12:00:00`）
+1. 所有时间字段使用 **ISO 8601** 格式（如：`2026-02-02T12:00:00`）
 2. 所有 ID 字段使用 **UUID** 格式
 3. 分页参数从 **1** 开始计数
 4. Agent 名称在系统中必须**唯一**
 5. 只有**管理员**可以创建、更新、删除 Agent
 6. 流式接口使用 **Server-Sent Events (SSE)** 协议
+7. 新增了 3 个高级工具：`code_executor`, `browser`, `file`
+8. 新增了 `reasoning` 事件类型，用于显示 Agent 推理过程
+9. 新增了通过 `message_id` 查询执行记录的接口
+10. AgentExecution 新增了 `reasoning_steps` 和 `message_id` 字段
