@@ -157,6 +157,14 @@ coverage/
 *_FIX.md
 *_NOTE.md
 *_TODO.md
+*_REPORT.md
+*_FIX_REPORT.md
+*_ANALYSIS.md
+*_DIAGNOSTIC.md
+*_COMPLETE.md
+*_SUMMARY.md
+*_TEST_GUIDE.md
+*_VERIFICATION.md
 personal-notes/
 scratch/
 
@@ -204,6 +212,13 @@ chromadb_data/
 # ============================================
 agent-service/logs/temp/
 agent_executions_cache/
+
+# ============================================
+# 临时验证和测试脚本
+# ============================================
+verify_*.sh
+test_*.sh
+run_*_tests.sh
 
 # ============================================
 # 部署相关
